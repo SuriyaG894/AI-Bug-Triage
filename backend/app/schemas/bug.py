@@ -1,0 +1,76 @@
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+
+
+class BugBase(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str = Field(..., min_length=1)
+
+
+class BugCreate(BugBase):
+    created_by: Optional[str] = None
+
+
+class BugUpdate(BaseModel):
+    title: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+    severity: Optional[str] = None
+    type: Optional[str] = None
+    status: Optional[str] = None
+
+
+class BugResponse(BugBase):
+    id: int
+    severity: str
+    type: str
+    status: str
+    source: str
+    external_id: Optional[str]
+    push_to_external: bool
+    created_by: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AnalysisResultResponse(BaseModel):
+    bug_id: int
+    root_causes: Optional[List[Dict[str, Any]]]
+    confidence_scores: Optional[Dict[str, float]]
+    analyzed_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DuplicateCheckRequest(BaseModel):
+    description: str = Field(..., min_length=1)
+
+
+class SimilarBug(BaseModel):
+    id: int
+    title: str
+    description: str
+    severity: str
+    type: str
+    status: str
+    source: str
+    similarity: float
+
+
+class DuplicateCheckResponse(BaseModel):
+    is_duplicate: bool
+    similar_bugs: List[SimilarBug]
+    message: str
+
+
+class BugWithAnalysis(BugResponse):
+    analysis: Optional[AnalysisResultResponse] = None
+
+
+class BugListResponse(BaseModel):
+    total: int
+    bugs: List[BugResponse]
