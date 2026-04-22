@@ -45,6 +45,12 @@ services:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
       - CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]
       - DEBUG=true
+      - AZURE_DEVOPS_ORG=${AZURE_DEVOPS_ORG}
+      - AZURE_DEVOPS_PROJECT=${AZURE_DEVOPS_PROJECT}
+      - AZURE_DEVOPS_PAT=${AZURE_DEVOPS_PAT}
+      - JIRA_BASE_URL=${JIRA_BASE_URL}
+      - JIRA_EMAIL=${JIRA_EMAIL}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy

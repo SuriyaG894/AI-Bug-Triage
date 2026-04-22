@@ -47,11 +47,12 @@ class AnalysisResultResponse(BaseModel):
 
 
 class DuplicateCheckRequest(BaseModel):
+    title: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
 
 
 class SimilarBug(BaseModel):
-    id: int
+    id: Optional[int] = None
     title: str
     description: str
     severity: str
@@ -59,6 +60,8 @@ class SimilarBug(BaseModel):
     status: str
     source: str
     similarity: float
+    external_url: Optional[str] = None
+    external_id: Optional[str] = None
 
 
 class DuplicateCheckResponse(BaseModel):

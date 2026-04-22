@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 
@@ -38,3 +38,35 @@ class IntegrationStatusResponse(BaseModel):
     is_connected: bool
     last_sync_at: Optional[datetime]
     error_message: Optional[str] = None
+
+
+class PushBugRequest(BaseModel):
+    tool_type: str = Field(..., pattern="^(azure_devops|jira)$")
+    project_key: Optional[str] = None
+
+
+class PushBugResponse(BaseModel):
+    success: bool
+    external_id: Optional[str] = None
+    url: Optional[str] = None
+    message: str
+    error: Optional[str] = None
+
+
+class ExternalDuplicateCheckRequest(BaseModel):
+    description: str = Field(..., min_length=10)
+    tool_type: str = Field(..., pattern="^(azure_devops|jira)$")
+    project_key: Optional[str] = None
+
+
+class ExternalSimilarBug(BaseModel):
+    id: str
+    title: str
+    description: str
+    similarity: float
+
+
+class ExternalDuplicateCheckResponse(BaseModel):
+    is_duplicate: bool
+    similar_bugs: List[ExternalSimilarBug]
+    message: str

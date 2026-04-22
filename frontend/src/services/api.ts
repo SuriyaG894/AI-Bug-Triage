@@ -22,6 +22,14 @@ export interface Bug {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  analysis?: AnalysisResult | null;
+}
+
+export interface AnalysisResult {
+  bug_id: number;
+  root_causes: Array<{cause: string; confidence: number}>;
+  confidence_scores: Record<string, number>;
+  analyzed_at: string;
 }
 
 export interface BugCreate {

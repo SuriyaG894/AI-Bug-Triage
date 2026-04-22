@@ -16,6 +16,11 @@ from .integration import (
     IntegrationUpdate,
     IntegrationResponse,
     IntegrationStatusResponse,
+    PushBugRequest,
+    PushBugResponse,
+    ExternalDuplicateCheckRequest,
+    ExternalDuplicateCheckResponse,
+    ExternalSimilarBug,
 )
 
 __all__ = [
@@ -34,4 +39,9 @@ __all__ = [
     "IntegrationUpdate",
     "IntegrationResponse",
     "IntegrationStatusResponse",
+    "PushBugRequest",
+    "PushBugResponse",
+    "ExternalDuplicateCheckRequest",
+    "ExternalDuplicateCheckResponse",
+    "ExternalSimilarBug",
 ]

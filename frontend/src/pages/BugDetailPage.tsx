@@ -2,10 +2,21 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { bugApi, Bug } from '../services/api';
 
+interface AnalysisData {
+  bug_id: number;
+  root_causes: Array<{cause: string; confidence: number}>;
+  confidence_scores: Record<string, number>;
+  analyzed_at: string;
+}
+
+interface BugWithAnalysis extends Bug {
+  analysis: AnalysisData | null;
+}
+
 export default function BugDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [bug, setBug] = useState<Bug | null>(null);
+  const [bug, setBug] = useState<BugWithAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,25 +109,38 @@ export default function BugDetailPage() {
             <p className="text-gray-700 whitespace-pre-wrap">{bug.description}</p>
           </div>
 
-          {/* AI Analysis (placeholder) */}
-          <div className="card bg-blue-50 border border-blue-200">
-            <h2 className="text-lg font-semibold text-blue-800 mb-4">
-              AI Analysis
-            </h2>
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm text-gray-500">Suggested Root Causes:</p>
-                <ul className="list-disc list-inside text-sm text-gray-700 mt-1">
-                  <li>Null reference handling</li>
-                  <li>Missing input validation</li>
-                  <li>API timeout</li>
-                </ul>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Confidence: 85%</p>
+          {/* AI Analysis - Dynamic from API */}
+          {bug.analysis ? (
+            <div className="card bg-blue-50 border border-blue-200">
+              <h2 className="text-lg font-semibold text-blue-800 mb-4">
+                AI Analysis
+              </h2>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm text-gray-500">Suggested Root Causes:</p>
+                  <ul className="list-disc list-inside text-sm text-gray-700 mt-1 space-y-1">
+                    {bug.analysis.root_causes?.map((rc, idx) => (
+                      <li key={idx}>
+                        {rc.cause} 
+                        <span className="text-blue-600 ml-1">
+                          ({(rc.confidence * 100).toFixed(0)}%)
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">
+                    Analyzed: {new Date(bug.analysis.analyzed_at).toLocaleString()}
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="card bg-gray-50 border border-gray-200">
+              <p className="text-sm text-gray-500">No analysis available</p>
+            </div>
+          )}
         </div>
 
         {/* Sidebar */}
