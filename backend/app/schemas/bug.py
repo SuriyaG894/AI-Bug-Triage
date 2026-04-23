@@ -6,6 +6,9 @@ from datetime import datetime
 class BugBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     description: str = Field(..., min_length=1)
+    priority: Optional[str] = None
+    severity: Optional[str] = None
+    repro_steps: Optional[str] = None
 
 
 class BugCreate(BugBase):
@@ -15,14 +18,29 @@ class BugCreate(BugBase):
 class BugUpdate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
+    priority: Optional[str] = None
     severity: Optional[str] = None
     type: Optional[str] = None
     status: Optional[str] = None
+    repro_steps: Optional[str] = None
+
+
+class BugSuggestionRequest(BaseModel):
+    title: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=1)
+    repro_steps: Optional[str] = None
+
+
+class BugSuggestionResponse(BaseModel):
+    priority: str
+    severity: str
+    bug_type: str
+    confidence: float
+    reasoning: str
 
 
 class BugResponse(BugBase):
     id: int
-    severity: str
     type: str
     status: str
     source: str

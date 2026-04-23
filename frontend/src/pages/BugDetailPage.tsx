@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { bugApi, Bug } from '../services/api';
+import { bugApi, Bug, PushBugResponse } from '../services/api';
 
 interface AnalysisData {
   bug_id: number;
@@ -19,6 +19,9 @@ export default function BugDetailPage() {
   const [bug, setBug] = useState<BugWithAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pushing, setPushing] = useState(false);
+  const [pushResult, setPushResult] = useState<PushBugResponse | null>(null);
+  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -39,6 +42,26 @@ export default function BugDetailPage() {
     }
   };
 
+  const handlePushToAzureDevOps = async () => {
+    if (!bug) return;
+    
+    setPushing(true);
+    setPushResult(null);
+    setShowModal(true);
+    
+    try {
+      const response = await bugApi.pushToExternal(bug.id, 'azure_devops');
+      setPushResult(response.data);
+    } catch (err: any) {
+      setPushResult({
+        success: false,
+        message: err.response?.data?.detail || 'Failed to push to Azure DevOps'
+      });
+    } finally {
+      setPushing(false);
+    }
+  };
+
   const getSeverityClass = (severity: string) => {
     const classes: Record<string, string> = {
       critical: 'severity-critical',
@@ -47,6 +70,14 @@ export default function BugDetailPage() {
       low: 'severity-low',
     };
     return classes[severity] || '';
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setPushResult(null);
+    if (pushResult?.success) {
+      fetchBug(bug!.id);
+    }
   };
 
   if (loading) {
@@ -85,7 +116,7 @@ export default function BugDetailPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{bug.title}</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Bug #{bug.id} • Created {new Date(bug.created_at).toLocaleDateString()}
+            Bug #{bug.id} - Created {new Date(bug.created_at).toLocaleDateString()}
           </p>
         </div>
         <div className="flex gap-2">
@@ -109,6 +140,13 @@ export default function BugDetailPage() {
             <p className="text-gray-700 whitespace-pre-wrap">{bug.description}</p>
           </div>
 
+          {bug.repro_steps && (
+            <div className="card">
+              <h2 className="text-lg font-semibold mb-4">Steps to Reproduce</h2>
+              <p className="text-gray-700 whitespace-pre-wrap">{bug.repro_steps}</p>
+            </div>
+          )}
+
           {/* AI Analysis - Dynamic from API */}
           {bug.analysis ? (
             <div className="card bg-blue-50 border border-blue-200">
@@ -123,7 +161,7 @@ export default function BugDetailPage() {
                       <li key={idx}>
                         {rc.cause} 
                         <span className="text-blue-600 ml-1">
-                          ({(rc.confidence * 100).toFixed(0)}%)
+                          {((rc.confidence * 100)).toFixed(0)}%
                         </span>
                       </li>
                     ))}
@@ -149,6 +187,10 @@ export default function BugDetailPage() {
             <h2 className="text-lg font-semibold mb-4">Details</h2>
             <div className="space-y-3">
               <div>
+                <p className="text-sm text-gray-500">Priority</p>
+                <p className="font-medium capitalize">{bug.priority || 'Not set'}</p>
+              </div>
+              <div>
                 <p className="text-sm text-gray-500">Severity</p>
                 <p className="font-medium capitalize">{bug.severity}</p>
               </div>
@@ -172,8 +214,15 @@ export default function BugDetailPage() {
               )}
               {bug.external_id && (
                 <div>
-                  <p className="text-sm text-gray-500">External ID</p>
-                  <p className="font-medium">{bug.external_id}</p>
+                  <p className="text-sm text-gray-500">Azure DevOps ID</p>
+                  <a 
+                    href={`https://dev.azure.com/suriyaganesh894/AIBugTriage/_workitems/edit/${bug.external_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-blue-600 hover:underline"
+                  >
+                    #{bug.external_id}
+                  </a>
                 </div>
               )}
             </div>
@@ -183,7 +232,13 @@ export default function BugDetailPage() {
           <div className="card">
             <h2 className="text-lg font-semibold mb-4">Actions</h2>
             <div className="space-y-2">
-              <button className="w-full btn-primary">Push to Azure DevOps</button>
+              <button 
+                onClick={handlePushToAzureDevOps}
+                disabled={pushing}
+                className="w-full btn-primary disabled:opacity-50"
+              >
+                {pushing ? 'Pushing...' : 'Push to Azure DevOps'}
+              </button>
               <button className="w-full btn-secondary">Push to JIRA</button>
               <button
                 onClick={() => navigate('/bugs')}
@@ -195,6 +250,63 @@ export default function BugDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal Popup */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            {pushing ? (
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                <p className="text-gray-700">Pushing to Azure DevOps...</p>
+              </div>
+            ) : pushResult ? (
+              <div className="text-center">
+                {pushResult.success ? (
+                  <>
+                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-semibold text-green-800 mb-2">Success!</h3>
+                    <p className="text-gray-600 mb-2">{pushResult.message}</p>
+                    {pushResult.external_id && (
+                      <p className="text-sm text-gray-500 mb-4">Work Item ID: {pushResult.external_id}</p>
+                    )}
+                    {pushResult.url && (
+                      <a 
+                        href={pushResult.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-block mb-4 text-blue-600 hover:underline"
+                      >
+                        View in Azure DevOps
+                      </a>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-semibold text-red-800 mb-2">Failed</h3>
+                    <p className="text-gray-600 mb-4">{pushResult.message}</p>
+                  </>
+                )}
+                <button 
+                  onClick={closeModal}
+                  className="btn-primary"
+                >
+                  Close
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

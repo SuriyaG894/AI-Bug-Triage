@@ -9,6 +9,8 @@ from .bug import (
     DuplicateCheckRequest,
     DuplicateCheckResponse,
     SimilarBug,
+    BugSuggestionRequest,
+    BugSuggestionResponse,
 )
 from .integration import (
     IntegrationBase,
@@ -34,6 +36,8 @@ __all__ = [
     "DuplicateCheckRequest",
     "DuplicateCheckResponse",
     "SimilarBug",
+    "BugSuggestionRequest",
+    "BugSuggestionResponse",
     "IntegrationBase",
     "IntegrationCreate",
     "IntegrationUpdate",

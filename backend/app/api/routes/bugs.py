@@ -17,10 +17,58 @@ from app.schemas import (
     DuplicateCheckRequest,
     DuplicateCheckResponse,
     SimilarBug,
+    BugSuggestionRequest,
+    BugSuggestionResponse,
 )
 from app.services.ai import classify_bug, suggest_root_causes, generate_embedding
 
 router = APIRouter()
+
+
+@router.post("/suggest", response_model=BugSuggestionResponse)
+async def suggest_bug_fields(
+    request: BugSuggestionRequest, db: AsyncSession = Depends(get_db)
+):
+    combined_text = f"{request.title}. {request.description}"
+    if request.repro_steps:
+        combined_text += f" Steps: {request.repro_steps}"
+    
+    classification = {"severity": "medium", "type": "general", "confidence": 0.5}
+    
+    try:
+        classification = await classify_bug(combined_text)
+    except Exception:
+        pass
+    
+    priority = "medium"
+    reasoning_parts = []
+    
+    severity = classification.get("severity", "medium")
+    bug_type = classification.get("type", "general")
+    confidence = classification.get("confidence", 0.5)
+    
+    if severity == "critical":
+        priority = "critical"
+        reasoning_parts.append("Critical severity detected - set to highest priority")
+    elif severity == "high":
+        priority = "high"
+        reasoning_parts.append("High severity issue - elevated priority")
+    elif severity in ["crash", "data_loss", "security"]:
+        priority = "critical"
+        reasoning_parts.append(f"Type '{bug_type}' suggests immediate attention")
+    else:
+        reasoning_parts.append("Standard issue processing")
+    
+    if request.repro_steps and len(request.repro_steps) > 50:
+        reasoning_parts.append("Detailed repro steps provided - helps faster resolution")
+    
+    return BugSuggestionResponse(
+        priority=priority,
+        severity=severity,
+        bug_type=bug_type,
+        confidence=confidence,
+        reasoning="; ".join(reasoning_parts)
+    )
 
 
 @router.post("", response_model=BugResponse)
@@ -28,15 +76,23 @@ async def create_bug(bug: BugCreate, db: AsyncSession = Depends(get_db)):
     classification = {"severity": "medium", "type": "general", "confidence": 0.5}
     
     try:
-        classification = await classify_bug(bug.description)
+        combined_text = f"{bug.title}. {bug.description}"
+        if bug.repro_steps:
+            combined_text += f" Steps: {bug.repro_steps}"
+        classification = await classify_bug(combined_text)
     except Exception:
         pass
+    
+    priority = bug.priority or classification.get("severity", "medium")
+    severity = bug.severity or classification.get("severity", "medium")
     
     new_bug = Bug(
         title=bug.title,
         description=bug.description,
-        severity=classification.get("severity", "medium"),
+        priority=priority,
+        severity=severity,
         type=classification.get("type", "general"),
+        repro_steps=bug.repro_steps,
         created_by=bug.created_by,
     )
     db.add(new_bug)

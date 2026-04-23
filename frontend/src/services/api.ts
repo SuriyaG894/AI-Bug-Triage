@@ -13,6 +13,7 @@ export interface Bug {
   id: number;
   title: string;
   description: string;
+  priority: string | null;
   severity: string;
   type: string;
   status: string;
@@ -20,6 +21,7 @@ export interface Bug {
   external_id: string | null;
   push_to_external: boolean;
   created_by: string | null;
+  repro_steps: string | null;
   created_at: string;
   updated_at: string;
   analysis?: AnalysisResult | null;
@@ -35,7 +37,18 @@ export interface AnalysisResult {
 export interface BugCreate {
   title: string;
   description: string;
+  priority?: string;
+  severity?: string;
+  repro_steps?: string;
   created_by?: string;
+}
+
+export interface BugSuggestion {
+  priority: string;
+  severity: string;
+  bug_type: string;
+  confidence: number;
+  reasoning: string;
 }
 
 export interface BugListResponse {
@@ -68,6 +81,13 @@ export interface Integration {
   created_at: string;
 }
 
+export interface PushBugResponse {
+  success: boolean;
+  external_id?: string;
+  url?: string;
+  message: string;
+}
+
 export const bugApi = {
   list: (params?: { severity?: string; type?: string; status?: string; search?: string }) =>
     api.get<BugListResponse>('/bugs', { params }),
@@ -80,8 +100,20 @@ export const bugApi = {
   
   delete: (id: number) => api.delete(`/bugs/${id}`),
   
-  checkDuplicate: (description: string) =>
-    api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { description }),
+  checkDuplicate: (title: string, description: string) =>
+    api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { title, description }),
+  
+  suggest: (title: string, description: string, reproSteps?: string) =>
+    api.post<BugSuggestion>('/bugs/suggest', {
+      title,
+      description,
+      repro_steps: reproSteps
+    }),
+  
+  pushToExternal: (bugId: number, toolType: string, projectKey?: string) =>
+    api.post<PushBugResponse>(`/bugs/${bugId}/push`, null, {
+      params: { tool_type: toolType, project_key: projectKey }
+    }),
 };
 
 export const analyticsApi = {

@@ -45,6 +45,7 @@ class Bug(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
+    priority = Column(String(20), default="medium")
     severity = Column(String(20), nullable=False)
     type = Column(String(50), nullable=False)
     status = Column(String(20), default="open")
@@ -52,6 +53,7 @@ class Bug(Base):
     external_id = Column(String(100), nullable=True)
     push_to_external = Column(Boolean, default=False)
     created_by = Column(String(100), nullable=True)
+    repro_steps = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
