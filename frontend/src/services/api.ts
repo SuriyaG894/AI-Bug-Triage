@@ -40,6 +40,7 @@ export interface BugCreate {
   priority?: string;
   severity?: string;
   repro_steps?: string;
+  assigned_to?: string;
   created_by?: string;
 }
 

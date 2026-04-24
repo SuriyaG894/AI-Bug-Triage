@@ -19,26 +19,42 @@ class AzureDevOpsClient:
         }
     
     async def create_work_item(self, title: str, description: str, 
-                               severity: str, bug_type: str) -> Dict[str, Any]:
+                               severity: str, bug_type: str,
+                               priority_value: str = None,
+                               repro_steps: str = None,
+                               assigned_to: str = None) -> Dict[str, Any]:
         """Create a work item in Azure DevOps"""
         work_item_type = "Bug"
         
-        # Map severity to Azure DevOps priority
-        priority_map = {
+        severity_value_map = {
+            "critical": "1 - Critical",
+            "high": "2 - High",
+            "medium": "3 - Medium",
+            "low": "4 - Low",
+        }
+        
+        priority_value_map = {
             "critical": 1,
             "high": 2,
             "medium": 3,
             "low": 4,
         }
         
+        full_description = f"{description}\n\n**Priority:** {priority_value or 'Not set'}\n**Severity:** {severity}\n**Steps to Reproduce:**\n{repro_steps or 'Not provided'}"
+        
         fields = [
             {"op": "add", "path": "/fields/System.Title", "value": title},
-            {"op": "add", "path": "/fields/System.Description", "value": description},
+            {"op": "add", "path": "/fields/System.Description", "value": full_description},
+            {"op": "add", "path": "/fields/Microsoft.VSTS.Common.Severity", "value": severity_value_map.get(severity, "3 - Medium")},
+            {"op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": priority_value_map.get(priority_value, 2)},
         ]
+        
+        if assigned_to:
+            fields.append({"op": "add", "path": "/fields/System.AssignedTo", "value": assigned_to})
         
         async with httpx.AsyncClient() as client:
             work_item_url = f"{self.base_url}/_apis/wit/workitems/%24Bug?api-version=7.0"
-            response = await client.post(
+            response = await client.patch(
                 work_item_url,
                 json=fields,
                 headers=self._get_headers(),
@@ -56,9 +72,10 @@ class AzureDevOpsClient:
                     "message": f"Created work item {result['id']}",
                 }
             else:
+                print(f"Azure DevOps API Error: {response.status_code} - {response.text}")
                 return {
                     "success": False,
-                    "message": f"Failed to create work item: {response.status_code}",
+                    "message": f"Failed to create work item: {response.status_code} - {response.text[:200]}",
                 }
     
     async def get_work_items(self, states: Optional[List[str]] = None) -> List[Dict[str, Any]]:

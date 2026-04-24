@@ -9,6 +9,7 @@ class BugBase(BaseModel):
     priority: Optional[str] = None
     severity: Optional[str] = None
     repro_steps: Optional[str] = None
+    assigned_to: Optional[str] = None
 
 
 class BugCreate(BugBase):
@@ -52,6 +53,13 @@ class BugResponse(BugBase):
 
     class Config:
         from_attributes = True
+
+
+class BugSuggestionRequest(BaseModel):
+    title: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=1)
+    repro_steps: Optional[str] = None
+    assigned_to: Optional[str] = None
 
 
 class AnalysisResultResponse(BaseModel):

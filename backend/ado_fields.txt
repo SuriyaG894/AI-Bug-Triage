@@ -1,0 +1,60 @@
+Iteration Path: System.IterationPath
+Iteration ID: System.IterationId
+External Link Count: System.ExternalLinkCount
+Iteration Level 7: System.IterationLevel7
+Iteration Level 6: System.IterationLevel6
+Iteration Level 5: System.IterationLevel5
+Iteration Level 4: System.IterationLevel4
+Iteration Level 3: System.IterationLevel3
+Iteration Level 2: System.IterationLevel2
+Iteration Level 1: System.IterationLevel1
+Area Level 7: System.AreaLevel7
+Area Level 6: System.AreaLevel6
+Area Level 5: System.AreaLevel5
+Area Level 4: System.AreaLevel4
+Area Level 3: System.AreaLevel3
+Area Level 2: System.AreaLevel2
+Area Level 1: System.AreaLevel1
+Team Project: System.TeamProject
+Parent: System.Parent
+Remote Link Count: System.RemoteLinkCount
+Comment Count: System.CommentCount
+Hyperlink Count: System.HyperLinkCount
+Attached File Count: System.AttachedFileCount
+Node Name: System.NodeName
+Area Path: System.AreaPath
+Revised Date: System.RevisedDate
+Changed Date: System.ChangedDate
+ID: System.Id
+Area ID: System.AreaId
+Authorized As: System.AuthorizedAs
+Title: System.Title
+State: System.State
+Authorized Date: System.AuthorizedDate
+Watermark: System.Watermark
+Rev: System.Rev
+Changed By: System.ChangedBy
+Reason: System.Reason
+Assigned To: System.AssignedTo
+Work Item Type: System.WorkItemType
+Created Date: System.CreatedDate
+Created By: System.CreatedBy
+Description: System.Description
+History: System.History
+Related Link Count: System.RelatedLinkCount
+Tags: System.Tags
+Board Column: System.BoardColumn
+Board Column Done: System.BoardColumnDone
+Board Lane: System.BoardLane
+Story Points: Microsoft.VSTS.Scheduling.StoryPoints
+Activity: Microsoft.VSTS.Common.Activity
+State Change Date: Microsoft.VSTS.Common.StateChangeDate
+Activated Date: Microsoft.VSTS.Common.ActivatedDate
+Activated By: Microsoft.VSTS.Common.ActivatedBy
+Resolved Date: Microsoft.VSTS.Common.ResolvedDate
+Resolved By: Microsoft.VSTS.Common.ResolvedBy
+Resolved Reason: Microsoft.VSTS.Common.ResolvedReason
+Closed Date: Microsoft.VSTS.Common.ClosedDate
+Closed By: Microsoft.VSTS.Common.ClosedBy
+Priority: Microsoft.VSTS.Common.Priority
+Severity: Microsoft.VSTS.Common.Severity

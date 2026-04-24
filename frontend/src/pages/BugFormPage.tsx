@@ -10,6 +10,8 @@ interface BugFormInputs {
   priority: string;
   severity: string;
   created_by: string;
+  pushToAzure: boolean;
+  assigned_to: string;
 }
 
 export default function BugFormPage() {
@@ -33,6 +35,8 @@ export default function BugFormPage() {
     defaultValues: {
       priority: 'medium',
       severity: 'medium',
+      pushToAzure: false,
+      assigned_to: '',
     }
   });
 
@@ -95,9 +99,8 @@ export default function BugFormPage() {
     }
   };
 
-  const onSubmit = async (data: BugFormInputs, pushToExternal: boolean = false) => {
+const onSubmit = async (data: BugFormInputs) => {
     setLoading(true);
-    setPushResult(null);
     try {
       const response = await bugApi.create({
         title: data.title,
@@ -105,11 +108,20 @@ export default function BugFormPage() {
         priority: data.priority,
         severity: data.severity,
         repro_steps: data.repro_steps,
+        assigned_to: data.assigned_to || undefined,
         created_by: data.created_by || undefined,
       });
       
-      if (pushToExternal) {
-        await pushToAzureDevOps(response.data.id);
+      if (data.pushToAzure) {
+        try {
+          const pushResp = await bugApi.pushToExternal(response.data.id, 'azure_devops');
+          setPushResult(pushResp.data);
+        } catch (pushErr: any) {
+          setPushResult({
+            success: false,
+            message: pushErr.response?.data?.detail || 'Push failed'
+          });
+        }
       }
       
       navigate('/bugs');
@@ -229,6 +241,18 @@ export default function BugFormPage() {
                 {...register('created_by')}
                 className="input-field"
                 placeholder="Your name (optional)"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Assign To (Email)
+              </label>
+              <input
+                type="text"
+                {...register('assigned_to')}
+                className="input-field"
+                placeholder="user@email.com (for Azure DevOps)"
               />
             </div>
           </div>
@@ -370,31 +394,15 @@ export default function BugFormPage() {
         )}
 
         {/* Submit */}
-        <div className="flex justify-end gap-4">
-          <button
-            type="button"
-            onClick={() => navigate('/bugs')}
-            className="btn-secondary"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSubmit((data) => onSubmit(data, true))()}
-            disabled={loading || pushingToAzure}
-            className="btn-secondary disabled:opacity-50"
-          >
-            {pushingToAzure ? 'Pushing...' : 'Submit & Push to Azure DevOps'}
-          </button>
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary disabled:opacity-50"
-          >
-            {loading ? 'Submitting...' : 'Submit Bug'}
-          </button>
-        </div>
-        <div className="flex justify-end gap-4">
+        <div className="flex justify-end gap-4 items-center">
+          <label className="flex items-center text-sm text-gray-600 mr-4">
+            <input
+              type="checkbox"
+              {...register('pushToAzure')}
+              className="mr-2"
+            />
+            Push to Azure DevOps
+          </label>
           <button
             type="button"
             onClick={() => navigate('/bugs')}

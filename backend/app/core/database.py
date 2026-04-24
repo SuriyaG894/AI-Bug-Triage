@@ -54,6 +54,7 @@ class Bug(Base):
     push_to_external = Column(Boolean, default=False)
     created_by = Column(String(100), nullable=True)
     repro_steps = Column(Text, nullable=True)
+    assigned_to = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -93,6 +93,7 @@ async def create_bug(bug: BugCreate, db: AsyncSession = Depends(get_db)):
         severity=severity,
         type=classification.get("type", "general"),
         repro_steps=bug.repro_steps,
+        assigned_to=bug.assigned_to,
         created_by=bug.created_by,
     )
     db.add(new_bug)
@@ -451,6 +452,9 @@ async def push_bug_to_external(
             description=bug.description,
             severity=bug.severity,
             bug_type=bug.type,
+            priority_value=bug.priority,
+            repro_steps=bug.repro_steps,
+            assigned_to=bug.assigned_to,
         )
         return PushBugResponse(**result)
     
