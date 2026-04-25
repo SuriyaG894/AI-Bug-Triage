@@ -11,7 +11,7 @@ class BugBase(BaseModel):
     repro_steps: Optional[str] = None
     expected_result: Optional[str] = None
     actual_result: Optional[str] = None
-    attachments: Optional[List[str]] = None
+    attachments: Optional[List[Any]] = None
     assigned_to: Optional[str] = None
 
 

@@ -132,7 +132,7 @@ export default function BugFormPage() {
         expected_result: data.expected_result || undefined,
         actual_result: data.actual_result || undefined,
         assigned_to: data.assigned_to || undefined,
-        attachments: attachments.length > 0 ? attachments.map(a => a.url) : undefined,
+        attachments: attachments.length > 0 ? attachments.map(a => ({ url: a.url, name: a.name })) : undefined,
         created_by: data.created_by || undefined,
       });
       

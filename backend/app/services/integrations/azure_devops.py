@@ -3,6 +3,7 @@ from app.core.config import settings
 import httpx
 import os
 import uuid
+import urllib.parse
 
 
 class AzureDevOpsClient:
@@ -20,12 +21,17 @@ class AzureDevOpsClient:
             "Content-Type": "application/json-patch+json",
         }
     
-    def _format_attachments(self, attachments: List[str]) -> str:
+    def _format_attachments(self, attachments: List[Any]) -> str:
         if not attachments:
             return ""
         html = "<ul>"
         for att in attachments:
-            html += f'<li><a href="{att}">{att.split("/")[-1]}</a></li>'
+            if isinstance(att, dict):
+                att_url = att.get("url", "")
+                name = att.get("name", att_url.split("/")[-1])
+                html += f'<li><a href="{att_url}">{name}</a></li>'
+            else:
+                html += f'<li><a href="{att}">{att.split("/")[-1]}</a></li>'
         html += "</ul>"
         return html
     
@@ -35,7 +41,7 @@ class AzureDevOpsClient:
                                repro_steps: str = None,
                                expected_result: str = None,
                                actual_result: str = None,
-                               attachments: List[str] = None,
+                               attachments: List[Any] = None,
                                assigned_to: str = None) -> Dict[str, Any]:
         """Create a work item in Azure DevOps"""
         severity_value_map = {
@@ -126,15 +132,22 @@ class AzureDevOpsClient:
                     "message": f"Failed to create work item: {response.status_code} - {response.text[:200]}",
                 }
     
-    async def _upload_and_link_attachment(self, client: httpx.AsyncClient, work_item_id: int, attachments: List[str]) -> None:
+    async def _upload_and_link_attachment(self, client: httpx.AsyncClient, work_item_id: int, attachments: List[Any]) -> None:
         """Upload attachment to Azure DevOps and link to work item AFTER work item is created"""
         if not attachments or attachments[0] == "No attachments":
             return
         
-        for att_url in attachments:
-            if not att_url:
+        for att in attachments:
+            if not att:
                 continue
             
+            if isinstance(att, dict):
+                att_url = att.get("url", "")
+                original_filename = att.get("name", "")
+            else:
+                att_url = att
+                original_filename = ""
+                
             file_path = att_url.replace("/api/uploads/", "")
             full_path = os.path.join("uploads", file_path)
             
@@ -143,8 +156,11 @@ class AzureDevOpsClient:
                 continue
             
             ext = os.path.splitext(file_path)[1].lower()
-            original_filename = f"bug_screenshot{ext}"
-            attach_api_url = f"{self.base_url}/_apis/wit/attachments?fileName={original_filename}&api-version=7.0"
+            if not original_filename:
+                original_filename = f"bug_screenshot{ext}"
+                
+            encoded_filename = urllib.parse.quote(original_filename)
+            attach_api_url = f"{self.base_url}/_apis/wit/attachments?fileName={encoded_filename}&api-version=7.0"
             
             try:
                 with open(full_path, "rb") as f:
@@ -184,6 +200,7 @@ class AzureDevOpsClient:
                                 "rel": "AttachedFile",
                                 "url": f"{self.base_url}/_apis/wit/attachments/{att_id}",
                                 "attributes": {
+                                    "name": original_filename,
                                     "comment": original_filename
                                 }
                             }
@@ -203,15 +220,21 @@ class AzureDevOpsClient:
             except Exception as e:
                 print(f"Error uploading {original_filename}: {e}")
 
-    async def _upload_attachments(self, client: httpx.AsyncClient, work_item_id: int, attachments: List[str]) -> List[str]:
+    async def _upload_attachments(self, client: httpx.AsyncClient, work_item_id: int, attachments: List[Any]) -> List[str]:
         """Upload attachments to Azure DevOps and return URLs"""
         uploaded_urls = []
         
-        for att_url in attachments:
-            if not att_url or att_url == "No attachments":
+        for att in attachments:
+            if not att or att == "No attachments":
                 continue
             
-            filename = att_url.split("/")[-1]
+            if isinstance(att, dict):
+                att_url = att.get("url", "")
+                filename = att.get("name", att_url.split("/")[-1])
+            else:
+                att_url = att
+                filename = att_url.split("/")[-1]
+                
             file_path = att_url.replace("/api/uploads/", "")
             full_path = os.path.join("uploads", file_path)
             
@@ -220,7 +243,8 @@ class AzureDevOpsClient:
                     with open(full_path, "rb") as f:
                         file_content = f.read()
                     
-                    attach_api_url = f"{self.base_url}/_apis/wit/attachments?fileName={filename}&api-version=7.0"
+                    encoded_filename = urllib.parse.quote(filename)
+                    attach_api_url = f"{self.base_url}/_apis/wit/attachments?fileName={encoded_filename}&api-version=7.0"
                     
                     attach_response = await client.post(
                         attach_api_url,

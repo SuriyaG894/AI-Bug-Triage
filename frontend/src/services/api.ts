@@ -43,7 +43,7 @@ export interface BugCreate {
   repro_steps?: string;
   expected_result?: string;
   actual_result?: string;
-  attachments?: string[];
+  attachments?: { url: string; name: string }[] | string[];
   assigned_to?: string;
   created_by?: string;
 }

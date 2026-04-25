@@ -1,0 +1,23 @@
+# Fix ADO Attachment Upload Missing Filename and Extension
+
+The current implementation has two issues:
+1. The frontend only sends the attachment URL (e.g., `/api/uploads/uuid.png`) to the backend, losing the original filename selected by the user.
+2. The backend hardcodes the filename as `bug_screenshot.ext` when pushing to Azure DevOps, and does not properly URL-encode the filename in the Azure DevOps API query parameter. Also, it sets the `comment` attribute to the filename but doesn't set the `name` attribute which results in ADO not rendering the filename properly.
+
+## Proposed Changes
+
+### 1. Frontend Modifications
+- **`frontend/src/services/api.ts`**: Update the `BugCreate` interface to allow attachments to be an array of objects containing both `url` and `name` (or maintain backward compatibility by allowing either `string` or `{url: string, name: string}`).
+- **`frontend/src/pages/BugFormPage.tsx`**: Update the form submission logic to send the original filename along with the URL in the `attachments` array instead of just the URL string.
+
+### 2. Backend Modifications
+- **`backend/app/schemas/bug.py`**: Update `BugBase` schema to accept a list of dicts (or a list of `Any`) for the `attachments` field so it can receive `{"url": "...", "name": "..."}`.
+- **`backend/app/services/integrations/azure_devops.py`**:
+  - Update `_upload_and_link_attachment` and `_upload_attachments` methods to handle attachments as dictionaries containing both `url` and `name`.
+  - Extract the original filename from the dictionary.
+  - URL-encode the `fileName` query parameter when making the POST request to the Azure DevOps `_apis/wit/attachments` API.
+  - Update the PATCH request for linking the attachment to include `"name": original_name` in the relation attributes so that ADO displays the filename correctly in the Name column, rather than just as a comment.
+
+## User Review Required
+> [!IMPORTANT]
+> Please review the plan above. Once approved, I will implement the changes in the frontend and backend files.
