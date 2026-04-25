@@ -1,12 +1,14 @@
 import { useForm } from 'react-hook-form';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { bugApi, DuplicateCheckResponse, BugSuggestion, PushBugResponse } from '../services/api';
+import { bugApi, DuplicateCheckResponse, BugSuggestion, PushBugResponse, uploadApi } from '../services/api';
 
 interface BugFormInputs {
   title: string;
   description: string;
   repro_steps: string;
+  expected_result: string;
+  actual_result: string;
   priority: string;
   severity: string;
   created_by: string;
@@ -14,9 +16,20 @@ interface BugFormInputs {
   assigned_to: string;
 }
 
+interface Attachment {
+  name: string;
+  url: string;
+}
+
 export default function BugFormPage() {
   const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [bugCreated, setBugCreated] = useState<{id: number; title: string} | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [modalMessage, setModalMessage] = useState('');
+  const [modalType, setModalType] = useState<'success' | 'error'>('success');
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const [gettingSuggestion, setGettingSuggestion] = useState(false);
   const [duplicateResult, setDuplicateResult] = useState<DuplicateCheckResponse | null>(null);
@@ -24,6 +37,8 @@ export default function BugFormPage() {
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [pushingToAzure, setPushingToAzure] = useState(false);
   const [pushResult, setPushResult] = useState<PushBugResponse | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const {
     register,
@@ -37,6 +52,8 @@ export default function BugFormPage() {
       severity: 'medium',
       pushToAzure: false,
       assigned_to: '',
+      expected_result: '',
+      actual_result: '',
     }
   });
 
@@ -99,8 +116,12 @@ export default function BugFormPage() {
     }
   };
 
-const onSubmit = async (data: BugFormInputs) => {
+  const onSubmit = async (data: BugFormInputs) => {
     setLoading(true);
+    setSubmitSuccess(false);
+    setBugCreated(null);
+    setPushResult(null);
+    
     try {
       const response = await bugApi.create({
         title: data.title,
@@ -108,25 +129,33 @@ const onSubmit = async (data: BugFormInputs) => {
         priority: data.priority,
         severity: data.severity,
         repro_steps: data.repro_steps,
+        expected_result: data.expected_result || undefined,
+        actual_result: data.actual_result || undefined,
         assigned_to: data.assigned_to || undefined,
+        attachments: attachments.length > 0 ? attachments.map(a => a.url) : undefined,
         created_by: data.created_by || undefined,
       });
+      
+      setBugCreated({ id: response.data.id, title: response.data.title });
       
       if (data.pushToAzure) {
         try {
           const pushResp = await bugApi.pushToExternal(response.data.id, 'azure_devops');
           setPushResult(pushResp.data);
+          if (pushResp.data.success) {
+            showSuccessModal(`Bug created and pushed to Azure DevOps!\nWork Item ID: ${pushResp.data.external_id}`);
+          } else {
+            showErrorModal(`Bug created but push failed: ${pushResp.data.message}`);
+          }
         } catch (pushErr: any) {
-          setPushResult({
-            success: false,
-            message: pushErr.response?.data?.detail || 'Push failed'
-          });
+          showErrorModal(`Bug created but push failed: ${pushErr.response?.data?.detail || 'Push failed'}`);
         }
+      } else {
+        showSuccessModal(`Bug "${response.data.title}" created successfully!\nBug ID: ${response.data.id}`);
       }
-      
-      navigate('/bugs');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating bug:', error);
+      showErrorModal(error.response?.data?.detail || 'Failed to create bug');
     } finally {
       setLoading(false);
     }
@@ -136,11 +165,49 @@ const onSubmit = async (data: BugFormInputs) => {
     handleSubmit((data) => onSubmit(data, true))();
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const result = await uploadApi.upload(file);
+      setAttachments([...attachments, { name: file.name, url: result.url }]);
+    } catch (err) {
+      console.error('Upload failed:', err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeAttachment = (idx: number) => {
+    setAttachments(attachments.filter((_, i) => i !== idx));
+  };
+
+  const showSuccessModal = (message: string) => {
+    setModalMessage(message);
+    setModalType('success');
+    setShowModal(true);
+  };
+
+  const showErrorModal = (message: string) => {
+    setModalMessage(message);
+    setModalType('error');
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    if (modalType === 'success') {
+      navigate('/bugs');
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Report New Bug</h1>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        {/* Basic Info Card */}
         <div className="card">
           <div className="space-y-4">
             <div>
@@ -185,53 +252,98 @@ const onSubmit = async (data: BugFormInputs) => {
                 })}
                 className="input-field"
                 rows={4}
-                placeholder="1. Go to login page&#10;2. Enter valid credentials&#10;3. Click login button&#10;4. App crashes with error"
+                placeholder="1. Go to login page\n2. Enter valid credentials\n3. Click login button\n4. App crashes with error"
               />
               {errors.repro_steps && (
                 <p className="mt-1 text-sm text-red-600">{errors.repro_steps.message}</p>
               )}
-              <button
-                type="button"
-                onClick={fetchSuggestion}
-                disabled={gettingSuggestion || !title || title.length < 5 || !description || description.length < 20 || !reproSteps || reproSteps.length < 20}
-                className="mt-2 text-sm text-blue-600 hover:text-blue-800 disabled:text-gray-400 disabled:cursor-not-allowed"
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Expected Result <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                {...register('expected_result', { 
+                  required: 'Expected result is required', 
+                  minLength: { value: 10, message: 'Please provide expected result (at least 10 characters)' }
+                })}
+                className="input-field"
+                rows={3}
+                placeholder="What should happen when the steps are followed?"
+              />
+              {errors.expected_result && (
+                <p className="mt-1 text-sm text-red-600">{errors.expected_result.message}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Actual Result <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                {...register('actual_result', { 
+                  required: 'Actual result is required', 
+                  minLength: { value: 10, message: 'Please provide actual result (at least 10 characters)' }
+                })}
+                className="input-field"
+                rows={3}
+                placeholder="What actually happened?"
+              />
+              {errors.actual_result && (
+                <p className="mt-1 text-sm text-red-600">{errors.actual_result.message}</p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={fetchSuggestion}
+              disabled={gettingSuggestion || !title || title.length < 5 || !description || description.length < 20 || !reproSteps || reproSteps.length < 20}
+              className="mt-2 text-sm text-blue-600 hover:text-blue-800 disabled:text-gray-400 disabled:cursor-not-allowed"
+            >
+              {gettingSuggestion ? 'Analyzing...' : 'Get Priority & Severity Suggestion'}
+            </button>
+          </div>
+        </div>
+
+        {/* Priority & Severity Card */}
+        <div className="card">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Priority <span className="text-red-500">*</span>
+              </label>
+              <select
+                {...register('priority', { required: 'Priority is required' })}
+                className="input-field"
               >
-                {gettingSuggestion ? 'Analyzing...' : 'Get Priority & Severity Suggestion'}
-              </button>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Priority <span className="text-red-500">*</span>
-                </label>
-                <select
-                  {...register('priority', { required: 'Priority is required' })}
-                  className="input-field"
-                >
-                  <option value="critical">Critical</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Severity <span className="text-red-500">*</span>
-                </label>
-                <select
-                  {...register('severity', { required: 'Severity is required' })}
-                  className="input-field"
-                >
-                  <option value="critical">Critical</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Severity <span className="text-red-500">*</span>
+              </label>
+              <select
+                {...register('severity', { required: 'Severity is required' })}
+                className="input-field"
+              >
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
             </div>
+          </div>
+        </div>
 
+        {/* User Info Card */}
+        <div className="card">
+          <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Reported By
@@ -254,6 +366,39 @@ const onSubmit = async (data: BugFormInputs) => {
                 className="input-field"
                 placeholder="user@email.com (for Azure DevOps)"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Attachments (Proof)
+              </label>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept="image/*,video/*"
+                multiple
+                className="input-field file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+              />
+              {uploading && <p className="text-sm text-gray-500">Uploading...</p>}
+              {attachments.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {attachments.map((att, idx) => (
+                    <div key={idx} className="text-sm bg-gray-100 px-2 py-1 rounded flex items-center gap-1">
+                      <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                        {att.name}
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(idx)}
+                        className="text-red-500 hover:text-red-700 ml-1"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -286,37 +431,15 @@ const onSubmit = async (data: BugFormInputs) => {
               <p className="text-sm text-gray-600 mb-2">{suggestion.reasoning}</p>
               <div className="flex gap-4">
                 <div>
-                  <span className="text-sm text-gray-500">Suggested Priority:</span>
-                  <span className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                    suggestion.priority === 'critical' ? 'bg-red-100 text-red-800' :
-                    suggestion.priority === 'high' ? 'bg-orange-100 text-orange-800' :
-                    suggestion.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-green-100 text-green-800'
-                  }`}>
+                  <span className="text-sm text-gray-500">Priority:</span>
+                  <span className="ml-2 px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800">
                     {suggestion.priority.toUpperCase()}
                   </span>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Suggested Severity:</span>
-                  <span className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                    suggestion.severity === 'critical' ? 'bg-red-100 text-red-800' :
-                    suggestion.severity === 'high' ? 'bg-orange-100 text-orange-800' :
-                    suggestion.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-green-100 text-green-800'
-                  }`}>
+                  <span className="text-sm text-gray-500">Severity:</span>
+                  <span className="ml-2 px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800">
                     {suggestion.severity.toUpperCase()}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">Bug Type:</span>
-                  <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">
-                    {suggestion.bug_type}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">Confidence:</span>
-                  <span className="ml-2 text-sm font-medium">
-                    {(suggestion.confidence * 100).toFixed(0)}%
                   </span>
                 </div>
               </div>
@@ -348,77 +471,88 @@ const onSubmit = async (data: BugFormInputs) => {
             </h3>
             <div className="space-y-2">
               {duplicateResult.similar_bugs.slice(0, 3).map((bug) => (
-                <div
-                  key={bug.id}
-                  className="bg-white p-3 rounded border border-orange-100"
-                >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-medium">{bug.title}</p>
-                      <p className="text-sm text-gray-500">
-                        {bug.description.substring(0, 100)}...
-                      </p>
-                    </div>
-                    <span className={`severity-badge severity-${bug.severity}`}>
-                      {bug.severity}
-                    </span>
-                  </div>
+                <div key={bug.id} className="bg-white p-3 rounded border border-orange-100">
+                  <p className="font-medium">{bug.title}</p>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Push Result */}
-        {pushResult && (
-          <div className={`card ${pushResult.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className={`font-medium ${pushResult.success ? 'text-green-800' : 'text-red-800'}`}>
-                  {pushResult.success ? 'Successfully pushed to Azure DevOps!' : 'Push failed'}
-                </p>
-                <p className="text-sm text-gray-600 mt-1">{pushResult.message}</p>
-                {pushResult.url && (
-                  <a href={pushResult.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">
-                    View in Azure DevOps
-                  </a>
-                )}
-              </div>
-              {pushResult.external_id && (
-                <span className="text-sm text-gray-500">
-                  ID: {pushResult.external_id}
-                </span>
-              )}
-            </div>
+        {/* Submit */}
+        {!submitSuccess && (
+          <div className="flex justify-end gap-4 items-center">
+            <label className="flex items-center text-sm text-gray-600 mr-4">
+              <input
+                type="checkbox"
+                {...register('pushToAzure')}
+                className="mr-2"
+              />
+              Push to Azure DevOps
+            </label>
+            <button
+              type="button"
+              onClick={() => navigate('/bugs')}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary disabled:opacity-50"
+            >
+              {loading ? 'Submitting...' : 'Submit Bug'}
+            </button>
           </div>
         )}
-
-        {/* Submit */}
-        <div className="flex justify-end gap-4 items-center">
-          <label className="flex items-center text-sm text-gray-600 mr-4">
-            <input
-              type="checkbox"
-              {...register('pushToAzure')}
-              className="mr-2"
-            />
-            Push to Azure DevOps
-          </label>
-          <button
-            type="button"
-            onClick={() => navigate('/bugs')}
-            className="btn-secondary"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary disabled:opacity-50"
-          >
-            {loading ? 'Submitting...' : 'Submit Bug'}
-          </button>
-        </div>
       </form>
+
+      {/* Modal Popup */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className={`text-lg font-semibold ${modalType === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                {modalType === 'success' ? 'Success!' : 'Error'}
+              </h3>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-gray-700 mb-6 whitespace-pre-line">{modalMessage}</p>
+            <div className="flex justify-end gap-3">
+              {modalType === 'success' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowModal(false);
+                    setSubmitSuccess(false);
+                    setBugCreated(null);
+                    setPushResult(null);
+                  }}
+                  className="btn-secondary"
+                >
+                  Create Another
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={closeModal}
+                className="btn-primary"
+              >
+                {modalType === 'success' ? 'View Bugs' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

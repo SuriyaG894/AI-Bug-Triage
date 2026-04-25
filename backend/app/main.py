@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import logging
 
@@ -39,6 +40,13 @@ app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"]
 app.include_router(
     integrations.router, prefix="/api/integrations", tags=["integrations"]
 )
+
+try:
+    from app.api.routes.uploads import router as uploads_router
+    app.include_router(uploads_router, prefix="/api", tags=["uploads"])
+    app.mount("/api/uploads", StaticFiles(directory="uploads"), name="uploads")
+except Exception:
+    pass
 
 
 @app.get("/")

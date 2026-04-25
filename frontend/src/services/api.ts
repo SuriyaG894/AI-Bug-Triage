@@ -22,6 +22,7 @@ export interface Bug {
   push_to_external: boolean;
   created_by: string | null;
   repro_steps: string | null;
+  assigned_to: string | null;
   created_at: string;
   updated_at: string;
   analysis?: AnalysisResult | null;
@@ -40,6 +41,9 @@ export interface BugCreate {
   priority?: string;
   severity?: string;
   repro_steps?: string;
+  expected_result?: string;
+  actual_result?: string;
+  attachments?: string[];
   assigned_to?: string;
   created_by?: string;
 }
@@ -141,6 +145,21 @@ export const integrationApi = {
   sync: (id: number) => api.post(`/integrations/${id}/sync`),
   
   status: (id: number) => api.get(`/integrations/${id}/status`),
+};
+
+export const uploadApi = {
+  upload: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_URL}/api/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error('Upload failed');
+    }
+    return response.json();
+  },
 };
 
 export default api;

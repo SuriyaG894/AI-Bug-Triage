@@ -212,6 +212,10 @@ export default function BugDetailPage() {
                   <p className="font-medium">{bug.created_by}</p>
                 </div>
               )}
+              <div>
+                <p className="text-sm text-gray-500">Assigned To</p>
+                <p className="font-medium">{bug.assigned_to || 'Not assigned'}</p>
+              </div>
               {bug.external_id && (
                 <div>
                   <p className="text-sm text-gray-500">Azure DevOps ID</p>

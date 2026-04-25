@@ -9,11 +9,16 @@ class BugBase(BaseModel):
     priority: Optional[str] = None
     severity: Optional[str] = None
     repro_steps: Optional[str] = None
+    expected_result: Optional[str] = None
+    actual_result: Optional[str] = None
+    attachments: Optional[List[str]] = None
     assigned_to: Optional[str] = None
 
 
 class BugCreate(BugBase):
     created_by: Optional[str] = None
+    expected_result: Optional[str] = None
+    actual_result: Optional[str] = None
 
 
 class BugUpdate(BaseModel):
@@ -24,6 +29,8 @@ class BugUpdate(BaseModel):
     type: Optional[str] = None
     status: Optional[str] = None
     repro_steps: Optional[str] = None
+    expected_result: Optional[str] = None
+    actual_result: Optional[str] = None
 
 
 class BugSuggestionRequest(BaseModel):
