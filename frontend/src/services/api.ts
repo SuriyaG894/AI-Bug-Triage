@@ -9,6 +9,21 @@ const api = axios.create({
   },
 });
 
+let currentToken: string | null = null;
+
+api.interceptors.request.use((config) => {
+  if (currentToken) {
+    config.headers.Authorization = `Bearer ${currentToken}`;
+  }
+  return config;
+});
+
+export const setToken = (token: string | null) => {
+  currentToken = token;
+};
+
+export const getToken = () => currentToken;
+
 export interface Bug {
   id: number;
   title: string;
@@ -21,11 +36,12 @@ export interface Bug {
   external_id: string | null;
   push_to_external: boolean;
   created_by: string | null;
+  reporter_id?: number | null;
   repro_steps: string | null;
   assigned_to: string | null;
   created_at: string;
   updated_at: string;
-  analysis?: AnalysisResult | null;
+  analysis: AnalysisResult | null;
 }
 
 export interface AnalysisResult {
@@ -46,6 +62,7 @@ export interface BugCreate {
   attachments?: { url: string; name: string }[] | string[];
   assigned_to?: string;
   created_by?: string;
+  reporter_id?: number;
 }
 
 export interface BugSuggestion {

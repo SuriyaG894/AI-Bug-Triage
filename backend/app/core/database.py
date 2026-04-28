@@ -53,6 +53,7 @@ class Bug(Base):
     external_id = Column(String(100), nullable=True)
     push_to_external = Column(Boolean, default=False)
     created_by = Column(String(100), nullable=True)
+    reporter_id = Column(Integer, nullable=True)
     repro_steps = Column(Text, nullable=True)
     expected_result = Column(Text, nullable=True)
     actual_result = Column(Text, nullable=True)
@@ -107,3 +108,16 @@ class ExternalIssueCache(Base):
     extra_data = Column(JSONB, nullable=True)
     cached_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    full_name = Column(String(100), nullable=True)
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -19,6 +19,7 @@ class BugCreate(BugBase):
     created_by: Optional[str] = None
     expected_result: Optional[str] = None
     actual_result: Optional[str] = None
+    reporter_id: Optional[int] = None
 
 
 class BugUpdate(BaseModel):

@@ -1,7 +1,8 @@
 import { useForm } from 'react-hook-form';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { bugApi, DuplicateCheckResponse, BugSuggestion, PushBugResponse, uploadApi } from '../services/api';
+import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 interface BugFormInputs {
   title: string;
@@ -23,10 +24,10 @@ interface Attachment {
 
 export default function BugFormPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
-  const [bugCreated, setBugCreated] = useState<{id: number; title: string} | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalMessage, setModalMessage] = useState('');
   const [modalType, setModalType] = useState<'success' | 'error'>('success');
@@ -35,8 +36,6 @@ export default function BugFormPage() {
   const [duplicateResult, setDuplicateResult] = useState<DuplicateCheckResponse | null>(null);
   const [suggestion, setSuggestion] = useState<BugSuggestion | null>(null);
   const [showSuggestion, setShowSuggestion] = useState(false);
-  const [pushingToAzure, setPushingToAzure] = useState(false);
-  const [pushResult, setPushResult] = useState<PushBugResponse | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
 
@@ -100,27 +99,9 @@ export default function BugFormPage() {
     }
   };
 
-  const pushToAzureDevOps = async (bugId: number) => {
-    setPushingToAzure(true);
-    setPushResult(null);
-    try {
-      const response = await bugApi.pushToExternal(bugId, 'azure_devops');
-      setPushResult(response.data);
-    } catch (error: any) {
-      setPushResult({
-        success: false,
-        message: error.response?.data?.detail || 'Failed to push to Azure DevOps'
-      });
-    } finally {
-      setPushingToAzure(false);
-    }
-  };
-
   const onSubmit = async (data: BugFormInputs) => {
     setLoading(true);
     setSubmitSuccess(false);
-    setBugCreated(null);
-    setPushResult(null);
     
     try {
       const response = await bugApi.create({
@@ -133,15 +114,13 @@ export default function BugFormPage() {
         actual_result: data.actual_result || undefined,
         assigned_to: data.assigned_to || undefined,
         attachments: attachments.length > 0 ? attachments.map(a => ({ url: a.url, name: a.name })) : undefined,
-        created_by: data.created_by || undefined,
+        created_by: user?.email || data.created_by || undefined,
+        reporter_id: user?.id,
       });
-      
-      setBugCreated({ id: response.data.id, title: response.data.title });
       
       if (data.pushToAzure) {
         try {
           const pushResp = await bugApi.pushToExternal(response.data.id, 'azure_devops');
-          setPushResult(pushResp.data);
           if (pushResp.data.success) {
             showSuccessModal(`Bug created and pushed to Azure DevOps!\nWork Item ID: ${pushResp.data.external_id}`);
           } else {
@@ -159,10 +138,6 @@ export default function BugFormPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const onSubmitWithPush = () => {
-    handleSubmit((data) => onSubmit(data, true))();
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -534,8 +509,6 @@ export default function BugFormPage() {
                   onClick={() => {
                     setShowModal(false);
                     setSubmitSuccess(false);
-                    setBugCreated(null);
-                    setPushResult(null);
                   }}
                   className="btn-secondary"
                 >

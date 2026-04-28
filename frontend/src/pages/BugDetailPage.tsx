@@ -2,21 +2,10 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { bugApi, Bug, PushBugResponse } from '../services/api';
 
-interface AnalysisData {
-  bug_id: number;
-  root_causes: Array<{cause: string; confidence: number}>;
-  confidence_scores: Record<string, number>;
-  analyzed_at: string;
-}
-
-interface BugWithAnalysis extends Bug {
-  analysis: AnalysisData | null;
-}
-
 export default function BugDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [bug, setBug] = useState<BugWithAnalysis | null>(null);
+  const [bug, setBug] = useState<Bug | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pushing, setPushing] = useState(false);

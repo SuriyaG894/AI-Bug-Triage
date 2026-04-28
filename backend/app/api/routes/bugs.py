@@ -98,6 +98,7 @@ async def create_bug(bug: BugCreate, db: AsyncSession = Depends(get_db)):
         attachments=bug.attachments,
         assigned_to=bug.assigned_to,
         created_by=bug.created_by,
+        reporter_id=bug.reporter_id,
     )
     db.add(new_bug)
     await db.commit()
@@ -240,21 +241,25 @@ async def check_azure_devops_duplicates(request_description: str, request_title:
         work_items = await client.get_work_items(states=["New", "Active", "In Progress"])
         
         for item in work_items:
-            title = item.get("webUrl", "") or ""
+            item_title = item.get("title", "") or item.get("webUrl", "") or ""
+            item_desc = item.get("description", "") or ""
             ext_id = str(item.get("id", ""))
             
-            similarity = calculate_text_similarity(request_title, title)
-            if similarity > 0.5:
+            # Use combined title + description similarity for better accuracy
+            similarity = calculate_combined_similarity(
+                request_title, request_description, item_title, item_desc
+            )
+            if similarity > 0.35:
                 similar.append(
                     SimilarBug(
                         id=None,
-                        title=title,
-                        description=request_description,
+                        title=item_title,
+                        description=item_desc[:200] if item_desc else "",
                         severity="",
                         type="",
                         status=item.get("state", ""),
                         source="azure_devops",
-                        similarity=similarity,
+                        similarity=round(similarity, 3),
                         external_url=f"https://dev.azure.com/{settings.AZURE_DEVOPS_ORG}/{settings.AZURE_DEVOPS_PROJECT}/_workitems/edit/{ext_id}",
                         external_id=ext_id,
                     )
@@ -287,22 +292,33 @@ async def check_jira_duplicates(request_description: str, request_title: str, pr
         
         for issue in issues:
             fields = issue.get("fields", {})
-            title = fields.get("summary", "")
+            item_title = fields.get("summary", "")
             ext_id = issue.get("key", "")
             status = fields.get("status", {}).get("name", "")
             
-            similarity = calculate_text_similarity(request_title, title)
-            if similarity > 0.5:
+            # Extract JIRA description text
+            item_desc = ""
+            try:
+                if fields.get("description"):
+                    item_desc = fields["description"].get("content", [{}])[0].get("content", [{}])[0].get("text", "")
+            except (IndexError, AttributeError, TypeError):
+                item_desc = str(fields.get("description", "")) if fields.get("description") else ""
+            
+            # Use combined title + description similarity
+            similarity = calculate_combined_similarity(
+                request_title, request_description, item_title, item_desc
+            )
+            if similarity > 0.35:
                 similar.append(
                     SimilarBug(
                         id=None,
-                        title=title,
-                        description=fields.get("description", {}).get("content", [{}])[0].get("content", [{}])[0].get("text", "") if fields.get("description") else "",
+                        title=item_title,
+                        description=item_desc[:200] if item_desc else "",
                         severity="",
                         type="",
                         status=status,
                         source="jira",
-                        similarity=similarity,
+                        similarity=round(similarity, 3),
                         external_url=f"{settings.JIRA_BASE_URL}/browse/{ext_id}",
                         external_id=ext_id,
                     )
@@ -313,13 +329,37 @@ async def check_jira_duplicates(request_description: str, request_title: str, pr
     return similar
 
 
+# Stop words to exclude from similarity comparisons
+DUPLICATE_STOP_WORDS = {
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "can", "need", "must",
+    "in", "on", "at", "to", "for", "of", "with", "by", "from", "as",
+    "into", "through", "during", "before", "after", "above", "below",
+    "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
+    "it", "its", "i", "me", "my", "we", "our", "you", "your", "he",
+    "she", "they", "them", "their", "what", "which", "who", "whom",
+    "when", "where", "why", "how", "if", "because", "while", "although",
+    "about", "up", "out", "off", "over", "under", "again", "further",
+    "once", "here", "there", "am", "bug", "error", "issue", "problem",
+}
+
+
+def _extract_meaningful_words(text: str) -> set:
+    """Extract meaningful words from text, removing stop words and short tokens."""
+    import re
+    text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text.lower())
+    words = text.split()
+    return {w for w in words if w not in DUPLICATE_STOP_WORDS and len(w) > 2}
+
+
 def calculate_text_similarity(text1: str, text2: str) -> float:
-    """Calculate text similarity based on word overlap"""
+    """Calculate text similarity based on meaningful word overlap (Jaccard with stop-word removal)."""
     if not text1 or not text2:
         return 0.0
     
-    words1 = set(text1.lower().split())
-    words2 = set(text2.lower().split())
+    words1 = _extract_meaningful_words(text1)
+    words2 = _extract_meaningful_words(text2)
     
     if not words1 or not words2:
         return 0.0
@@ -330,18 +370,33 @@ def calculate_text_similarity(text1: str, text2: str) -> float:
     return len(intersection) / len(union) if union else 0.0
 
 
+def calculate_combined_similarity(title1: str, desc1: str, title2: str, desc2: str) -> float:
+    """Calculate weighted similarity using both title and description.
+    
+    Title similarity is weighted higher (0.6) because titles are more 
+    discriminating for duplicate detection than full descriptions.
+    """
+    title_sim = calculate_text_similarity(title1, title2)
+    desc_sim = calculate_text_similarity(desc1, desc2)
+    return 0.6 * title_sim + 0.4 * desc_sim
+
+
 @router.post("/check-duplicate", response_model=DuplicateCheckResponse)
 async def check_duplicate(
     request: DuplicateCheckRequest, db: AsyncSession = Depends(get_db)
 ):
     similar_bugs = []
-    embedding = await generate_embedding(request.description)
     
+    # Use BOTH title and description for embedding generation (more context = better matching)
+    combined_text = f"{request.title}. {request.description}"
+    embedding = await generate_embedding(combined_text)
+    
+    # --- Phase 1: Embedding-based similarity (most accurate) ---
     if embedding:
         result = await db.execute(
             select(Bug, BugEmbedding)
             .join(BugEmbedding, Bug.id == BugEmbedding.bug_id)
-            .limit(10)
+            .limit(50)
         )
         rows = result.all()
         
@@ -349,8 +404,15 @@ async def check_duplicate(
             if emb is not None:
                 emb_array = emb.embedding
                 if emb_array is not None and len(emb_array) > 0:
-                    similarity = calculate_cosine_similarity(embedding, list(emb_array))
-                    if similarity > 0.7:
+                    emb_similarity = calculate_cosine_similarity(embedding, list(emb_array))
+                    # Also calculate text similarity as a cross-check
+                    text_sim = calculate_combined_similarity(
+                        request.title, request.description,
+                        bug.title, bug.description or ""
+                    )
+                    # Use the higher of the two scores
+                    similarity = max(emb_similarity, text_sim)
+                    if similarity > 0.4:
                         similar_bugs.append(
                             SimilarBug(
                                 id=bug.id,
@@ -360,48 +422,53 @@ async def check_duplicate(
                                 type=bug.type,
                                 status=bug.status,
                                 source=bug.source,
-                                similarity=similarity,
+                                similarity=round(similarity, 3),
                             )
                         )
     
+    # --- Phase 2: Text-based fallback (only if embeddings found nothing) ---
     if not similar_bugs:
         result = await db.execute(
-            select(Bug)
-            .where(
-                or_(
-                    Bug.title.ilike(f"%{request.description[:50]}%"),
-                    Bug.description.ilike(f"%{request.description[:50]}%"),
-                )
-            )
-            .limit(5)
+            select(Bug).limit(50)
         )
         bugs = result.scalars().all()
 
         for bug in bugs:
-            similarity = 0.75 if bug.title.lower() in request.description.lower() else 0.5
-            similar_bugs.append(
-                SimilarBug(
-                    id=bug.id,
-                    title=bug.title,
-                    description=bug.description,
-                    severity=bug.severity,
-                    type=bug.type,
-                    status=bug.status,
-                    source=bug.source,
-                    similarity=similarity,
-                )
+            # Calculate proper combined similarity instead of arbitrary scores
+            similarity = calculate_combined_similarity(
+                request.title, request.description,
+                bug.title, bug.description or ""
             )
+            if similarity > 0.35:
+                similar_bugs.append(
+                    SimilarBug(
+                        id=bug.id,
+                        title=bug.title,
+                        description=bug.description,
+                        severity=bug.severity,
+                        type=bug.type,
+                        status=bug.status,
+                        source=bug.source,
+                        similarity=round(similarity, 3),
+                    )
+                )
 
+    # --- Phase 3: External sources ---
     azure_bugs = await check_azure_devops_duplicates(request.description, request.title)
     similar_bugs.extend(azure_bugs)
     
     jira_bugs = await check_jira_duplicates(request.description, request.title)
     similar_bugs.extend(jira_bugs)
     
+    # Sort by similarity and keep top 5
     similar_bugs.sort(key=lambda x: x.similarity, reverse=True)
     similar_bugs = similar_bugs[:5]
+    
+    # Filter out low-confidence matches (below 0.35 combined threshold)
+    similar_bugs = [b for b in similar_bugs if b.similarity >= 0.35]
 
-    is_duplicate = len(similar_bugs) > 0 and similar_bugs[0].similarity > 0.8
+    # Only flag as duplicate if top match has high confidence
+    is_duplicate = len(similar_bugs) > 0 and similar_bugs[0].similarity > 0.85
 
     return DuplicateCheckResponse(
         is_duplicate=is_duplicate,
