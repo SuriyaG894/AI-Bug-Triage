@@ -2,6 +2,7 @@ import os
 from typing import Optional, Dict, Any, List
 from groq import AsyncGroq
 from app.core.config import settings
+from .embedding_service import generate_embedding
 
 client = AsyncGroq(api_key=settings.groq_api_key_decrypted)
 
@@ -141,68 +142,10 @@ def extract_keywords(text: str) -> List[str]:
 
 
 async def generate_embedding(text: str) -> Optional[List[float]]:
-    """Generate a semantically meaningful embedding for bug text.
+    """Generate a semantic embedding using all-MiniLM-L6-v2.
     
-    Uses Groq LLM to extract semantic keywords, then builds a deterministic
-    embedding from those keywords. Falls back to local keyword extraction
-    if Groq is unavailable.
+    Returns a 384-dimensional dense vector representing the semantic
+    meaning of the input text.
     """
-    import hashlib
-    
-    keywords = []
-    
-    # Try Groq-powered keyword extraction for better semantic understanding
-    if settings.groq_api_key_decrypted:
-        try:
-            prompt = f"""Extract 5-10 unique technical keywords from this bug report that capture its core meaning.
-Return ONLY a comma-separated list of lowercase keywords, nothing else.
-
-Bug text: {text[:500]}
-
-Keywords:"""
-            response = await client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=100,
-            )
-            content = response.choices[0].message.content.strip()
-            keywords = [w.strip().lower() for w in content.split(",") if w.strip()]
-        except Exception:
-            pass
-    
-    # Fallback: local keyword extraction
-    if not keywords:
-        keywords = extract_keywords(text[:500])
-    
-    if not keywords:
-        keywords = ["unknown"]
-    
-    # Build embedding: each keyword gets a stable hash-based position in the vector
-    # Similar keywords from different texts will activate similar positions
-    embedding = [0.0] * 1536
-    
-    for keyword in keywords:
-        # Each keyword deterministically activates a set of positions
-        seed = hashlib.md5(keyword.encode()).hexdigest()
-        # Activate ~48 positions per keyword (spread across the vector)
-        for j in range(24):
-            chunk = hashlib.md5(f"{keyword}_{j}".encode()).hexdigest()
-            pos = int(chunk[:4], 16) % 1536
-            val = (int(chunk[4:6], 16) / 255.0) * 0.5 + 0.5  # value between 0.5-1.0
-            embedding[pos] = max(embedding[pos], val)
-        
-        # Also activate positions for bigrams (pairs with other keywords)
-        for other_kw in keywords:
-            if other_kw != keyword:
-                bigram = f"{min(keyword, other_kw)}_{max(keyword, other_kw)}"
-                bigram_hash = hashlib.md5(bigram.encode()).hexdigest()
-                pos = int(bigram_hash[:4], 16) % 1536
-                embedding[pos] = max(embedding[pos], 0.7)
-    
-    # Normalize the vector
-    magnitude = sum(v * v for v in embedding) ** 0.5
-    if magnitude > 0:
-        embedding = [v / magnitude for v in embedding]
-    
-    return embedding
+    from .embedding_service import generate_embedding as gen_emb
+    return gen_emb(text)

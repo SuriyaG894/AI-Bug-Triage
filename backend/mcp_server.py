@@ -77,42 +77,22 @@ config = get_config()
 mcp = FastMCP("BugTriage-DuplicateHunter", json_response=True)
 
 # ============================================================================
-# Embedding Generation (matches backend algorithm)
+# Embedding Generation (all-MiniLM-L6-v2)
 # ============================================================================
 
 def generate_embedding(text: str) -> List[float]:
-    """Generate embedding for text (same algorithm as backend)"""
-    text = text[:500]
-    hash_val = hashlib.sha256(text.encode()).hexdigest()
-    
-    values = []
-    for i in range(0, min(64, len(hash_val)), 2):
-        try:
-            val = int(hash_val[i:i+2], 16)
-        except ValueError:
-            val = 0
-        values.append(float(val) / 255.0)
-    
-    while len(values) < 1536:
-        ext = hashlib.sha256((text + str(len(values))).encode()).hexdigest()
-        for i in range(0, min(64, len(ext)), 2):
-            try:
-                val = int(ext[i:i+2], 16)
-            except ValueError:
-                val = 0
-            values.append(float(val) / 255.0)
-    
-    return values[:1536]
+    """Generate semantic embedding using all-MiniLM-L6-v2."""
+    from app.services.ai.embedding_service import generate_embedding as gen_emb
+    result = gen_emb(text)
+    if result is None:
+        return [0.0] * 384
+    return result
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
     """Calculate cosine similarity between two vectors"""
-    if not a or not b:
-        return 0.0
-    dot_product = sum(x * y for x, y in zip(a, b))
-    mag_a = sum(x * x for x in a) ** 0.5
-    mag_b = sum(y * y for y in b) ** 0.5
-    return dot_product / (mag_a * mag_b) if mag_a and mag_b else 0.0
+    from app.services.ai.embedding_service import cosine_similarity as cos_sim
+    return cos_sim(a, b)
 
 
 MCP_STOP_WORDS = {
@@ -569,7 +549,7 @@ def get_database_schema() -> str:
     Table: bug_embeddings
     - id (int, PK)
     - bug_id (int, FK)
-    - embedding (vector[1536])
+    - embedding (vector[384])
     - created_at (datetime)
 
     Table: analysis_results

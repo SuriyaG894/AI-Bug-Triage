@@ -17,7 +17,24 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up...")
     await init_db()
     logger.info("Database initialized")
+    
+    try:
+        from app.services.sync_service import _sync_service
+        from app.core.config import settings
+        if settings.SYNC_ENABLED and settings.SYNC_INTERVAL_MINUTES > 0:
+            result = await _sync_service.start_scheduler()
+            logger.info(f"Sync scheduler started: {result}")
+    except Exception as e:
+        logger.warning(f"Sync scheduler not started: {e}")
+    
     yield
+    
+    try:
+        from app.services.sync_service import _sync_service
+        await _sync_service.stop_scheduler()
+    except Exception:
+        pass
+    
     logger.info("Shutting down...")
 
 
@@ -45,7 +62,13 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 try:
     from app.api.routes.uploads import router as uploads_router
     app.include_router(uploads_router, prefix="/api", tags=["uploads"])
-    app.mount("/api/uploads", StaticFiles(directory="uploads"), name="uploads")
+    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+except Exception:
+    pass
+
+try:
+    from app.api.routes import sync as sync_router
+    app.include_router(sync_router.router)
 except Exception:
     pass
 

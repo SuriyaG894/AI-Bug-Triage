@@ -1,6 +1,24 @@
 import { useState, useEffect } from 'react';
 import { integrationApi, Integration } from '../services/api';
 
+const syncApi = {
+  getStatus: () => fetch('/api/sync/status').then(r => r.json()),
+  trigger: () => fetch('/api/sync/trigger', { method: 'POST' }).then(r => r.json()),
+  updateConfig: (interval: number) => fetch('/api/sync/config', { 
+    method: 'POST', 
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ interval_minutes: interval })
+  }).then(r => r.json()),
+  start: () => fetch('/api/sync/start', { method: 'POST' }).then(r => r.json()),
+  stop: () => fetch('/api/sync/stop', { method: 'POST' }).then(r => r.json()),
+};
+
+interface SyncStatus {
+  is_running: boolean;
+  interval_minutes: number;
+  last_sync_at: string | null;
+}
+
 export default function SettingsPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loading, setLoading] = useState(true);
@@ -12,8 +30,13 @@ export default function SettingsPage() {
     credentials: '',
   });
 
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncInterval, setSyncInterval] = useState(15);
+
   useEffect(() => {
     fetchIntegrations();
+    fetchSyncStatus();
   }, []);
 
   const fetchIntegrations = async () => {
@@ -25,6 +48,41 @@ export default function SettingsPage() {
       console.error('Error fetching integrations:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSyncStatus = async () => {
+    try {
+      const status = await syncApi.getStatus();
+      setSyncStatus(status);
+      setSyncInterval(status.interval_minutes || 15);
+    } catch (error) {
+      console.error('Error fetching sync status:', error);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    setSyncing(true);
+    try {
+      const result = await syncApi.trigger();
+      alert(`Sync complete: ${result.synced || 0} synced, ${result.updated || 0} updated`);
+      fetchSyncStatus();
+    } catch (error) {
+      console.error('Error triggering sync:', error);
+      alert('Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleIntervalChange = async (minutes: number) => {
+    try {
+      await syncApi.updateConfig(minutes);
+      setSyncInterval(minutes);
+      alert(`Sync interval updated to ${minutes} minutes`);
+    } catch (error) {
+      console.error('Error updating sync config:', error);
+      alert('Failed to update sync interval');
     }
   };
 
@@ -80,6 +138,59 @@ export default function SettingsPage() {
         <button onClick={() => setShowForm(true)} className="btn-primary">
           Add Integration
         </button>
+      </div>
+
+      {/* Sync Settings Card */}
+      <div className="card mb-6">
+        <h2 className="text-lg font-semibold mb-4">Azure DevOps Sync</h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Syncs bugs from Azure DevOps to local cache for faster duplicate detection.
+        </p>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Sync Interval
+            </label>
+            <select
+              value={syncInterval}
+              onChange={(e) => handleIntervalChange(Number(e.target.value))}
+              className="input-field"
+            >
+              <option value={5}>Every 5 minutes</option>
+              <option value={15}>Every 15 minutes</option>
+              <option value={60}>Every hour</option>
+              <option value={0}>Manual only</option>
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Status
+            </label>
+            <div className="flex items-center gap-2 mt-2">
+              <span className={`w-3 h-3 rounded-full ${syncStatus?.is_running ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+              <span className="text-sm">
+                {syncStatus?.is_running ? 'Running' : 'Stopped'}
+              </span>
+            </div>
+            {syncStatus?.last_sync_at && (
+              <p className="text-xs text-gray-500 mt-1">
+                Last sync: {new Date(syncStatus.last_sync_at).toLocaleString()}
+              </p>
+            )}
+          </div>
+        </div>
+        
+        <div className="mt-4">
+          <button
+            onClick={handleSyncNow}
+            disabled={syncing}
+            className="btn-secondary"
+          >
+            {syncing ? 'Syncing...' : 'Sync Now'}
+          </button>
+        </div>
       </div>
 
       {/* Integration Form */}

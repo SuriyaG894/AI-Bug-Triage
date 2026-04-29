@@ -68,7 +68,7 @@ class BugEmbedding(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     bug_id = Column(Integer, index=True, nullable=False)
-    embedding = Column(Vector(1536))
+    embedding = Column(Vector(384))
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -104,7 +104,7 @@ class ExternalIssueCache(Base):
     external_id = Column(String(100), nullable=False)
     title = Column(String(500), nullable=True)
     description = Column(Text, nullable=True)
-    embedding = Column(Vector(1536))
+    embedding = Column(Vector(384))
     extra_data = Column(JSONB, nullable=True)
     cached_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)

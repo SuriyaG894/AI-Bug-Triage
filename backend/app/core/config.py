@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
+from datetime import datetime
 import json
 import base64
 import os
@@ -59,11 +60,20 @@ class Settings(BaseSettings):
     JIRA_EMAIL: str = ""
     JIRA_API_TOKEN: str = ""
     
+    SYNC_INTERVAL_MINUTES: int = 15
+    SYNC_ENABLED: bool = True
+    LAST_SYNC_AT: Optional[datetime] = None
+    
     ENCRYPTION_KEY: str = "bug-triage-app-key"
 
     @property
     def cors_origins_list(self) -> List[str]:
-        return json.loads(self.CORS_ORIGINS)
+        if not self.CORS_ORIGINS or not self.CORS_ORIGINS.strip():
+            return ["http://localhost:5173", "http://localhost:3000"]
+        try:
+            return json.loads(self.CORS_ORIGINS)
+        except json.JSONDecodeError:
+            return ["http://localhost:5173", "http://localhost:3000"]
     
     @property
     def groq_api_key_decrypted(self) -> str:

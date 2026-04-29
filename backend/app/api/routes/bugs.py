@@ -107,7 +107,7 @@ async def create_bug(bug: BugCreate, db: AsyncSession = Depends(get_db)):
     if settings.groq_api_key_decrypted:
         try:
             embedding = await generate_embedding(bug.description)
-            if embedding and len(embedding) >= 1536:
+            if embedding and len(embedding) >= 384:
                 db.add(BugEmbedding(bug_id=new_bug.id, embedding=embedding))
                 await db.commit()
         except Exception:
@@ -453,12 +453,52 @@ async def check_duplicate(
                     )
                 )
 
-    # --- Phase 3: External sources ---
-    azure_bugs = await check_azure_devops_duplicates(request.description, request.title)
-    similar_bugs.extend(azure_bugs)
-    
-    jira_bugs = await check_jira_duplicates(request.description, request.title)
-    similar_bugs.extend(jira_bugs)
+    # --- Phase 3: External sources (synced local cache) ---
+    # Query external_issue_cache which has synced ADO bugs with embeddings
+    if embedding:
+        try:
+            result = await db.execute(
+                select(Bug).limit(0)
+            )
+            
+            from sqlalchemy import text, func
+            
+            result = await db.execute(
+                text("""
+                    SELECT id, external_id, title, description, embedding, cached_at
+                    FROM external_issue_cache
+                    WHERE embedding IS NOT NULL AND integration_id = 1
+                    LIMIT 50
+                """)
+            )
+            rows = result.all()
+            
+            for row in rows:
+                try:
+                    emb_data = row[4]
+                    if emb_data and len(emb_data) > 0:
+                        ext_similarity = calculate_cosine_similarity(embedding, list(emb_data))
+                        
+                        if ext_similarity > 0.35:
+                            similar_bugs.append(
+                                SimilarBug(
+                                    id=None,
+                                    title=row[2],
+                                    description=row[3][:200] if row[3] else "",
+                                    severity="",
+                                    type="azure_devops",
+                                    status="",
+                                    source="azure_devops",
+                                    similarity=round(ext_similarity, 3),
+                                    external_url=f"https://dev.azure.com/{settings.AZURE_DEVOPS_ORG}/{settings.AZURE_DEVOPS_PROJECT}/_workitems/edit/{row[1]}",
+                                    external_id=str(row[1]),
+                                )
+                            )
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Error checking external cache: {e}")
+            pass
     
     # Sort by similarity and keep top 5
     similar_bugs.sort(key=lambda x: x.similarity, reverse=True)
