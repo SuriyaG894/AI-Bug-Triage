@@ -4,6 +4,7 @@ from sqlalchemy import select, func, or_, text
 from sqlalchemy.dialects.postgresql import array
 from typing import Optional, List
 from datetime import datetime
+import json
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -457,11 +458,7 @@ async def check_duplicate(
     # Query external_issue_cache which has synced ADO bugs with embeddings
     if embedding:
         try:
-            result = await db.execute(
-                select(Bug).limit(0)
-            )
-            
-            from sqlalchemy import text, func
+            from sqlalchemy import text
             
             result = await db.execute(
                 text("""
@@ -477,7 +474,8 @@ async def check_duplicate(
                 try:
                     emb_data = row[4]
                     if emb_data and len(emb_data) > 0:
-                        ext_similarity = calculate_cosine_similarity(embedding, list(emb_data))
+                        emb_list = json.loads(emb_data)
+                        ext_similarity = calculate_cosine_similarity(embedding, emb_list)
                         
                         if ext_similarity > 0.35:
                             similar_bugs.append(
@@ -494,11 +492,10 @@ async def check_duplicate(
                                     external_id=str(row[1]),
                                 )
                             )
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"Error processing external bug {row[1]}: {e}")
         except Exception as e:
             print(f"Error checking external cache: {e}")
-            pass
     
     # Sort by similarity and keep top 5
     similar_bugs.sort(key=lambda x: x.similarity, reverse=True)

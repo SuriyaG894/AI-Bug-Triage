@@ -446,8 +446,25 @@ export default function BugFormPage() {
             </h3>
             <div className="space-y-2">
               {duplicateResult.similar_bugs.slice(0, 3).map((bug) => (
-                <div key={bug.id} className="bg-white p-3 rounded border border-orange-100">
-                  <p className="font-medium">{bug.title}</p>
+                <div key={bug.id || bug.external_id || Math.random()} className="bg-white p-3 rounded border border-orange-100">
+                  <div className="flex justify-between items-start">
+                    <p className="font-medium">{bug.title}</p>
+                    {bug.source === 'azure_devops' && (
+                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded">ADO</span>
+                    )}
+                  </div>
+                  {bug.source === 'azure_devops' && bug.external_url && (
+                    <a href={bug.external_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline flex items-center gap-1 mt-1">
+                      View in Azure DevOps
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </a>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    {Math.round(bug.similarity * 100)}% match
+                    {bug.severity && ` • ${bug.severity}`}
+                  </p>
                 </div>
               ))}
             </div>
