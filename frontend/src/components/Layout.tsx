@@ -10,9 +10,10 @@ const navItems = [
   { path: '/', label: 'Dashboard' },
   { path: '/bugs', label: 'Bugs' },
   { path: '/bugs/new', label: 'New Bug' },
-  { path: '/settings', label: 'Settings' },
   { path: '/profile', label: 'Profile' },
 ];
+
+const adminNavItem = { path: '/admin', label: 'Admin' };
 
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
@@ -42,6 +43,18 @@ export default function Layout({ children }: LayoutProps) {
                   {item.label}
                 </Link>
               ))}
+              {user?.is_admin && (
+                <Link
+                  to={adminNavItem.path}
+                  className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-md ${
+                    location.pathname === adminNavItem.path
+                      ? 'bg-purple-100 text-purple-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {adminNavItem.label}
+                </Link>
+              )}
               {user ? (
                 <div className="flex items-center space-x-3 ml-4 border-l pl-4">
                   <Link

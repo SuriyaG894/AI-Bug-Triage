@@ -20,6 +20,8 @@ class BugCreate(BugBase):
     expected_result: Optional[str] = None
     actual_result: Optional[str] = None
     reporter_id: Optional[int] = None
+    duplicate_justification: Optional[str] = None
+    duplicate_of_external_ids: Optional[List[str]] = None
 
 
 class BugUpdate(BaseModel):
@@ -58,6 +60,8 @@ class BugResponse(BugBase):
     created_by: Optional[str]
     created_at: datetime
     updated_at: datetime
+    duplicate_justification: Optional[str] = None
+    duplicate_of_external_ids: Optional[List[str]] = None
 
     class Config:
         from_attributes = True

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, text
 from sqlalchemy.dialects.postgresql import array
@@ -6,7 +7,7 @@ from typing import Optional, List
 from datetime import datetime
 import json
 
-from app.core.database import get_db
+from app.core.database import get_db, User
 from app.core.config import settings
 from app.models import Bug, AnalysisResult, BugEmbedding
 from app.schemas import (
@@ -24,6 +25,25 @@ from app.schemas import (
 from app.services.ai import classify_bug, suggest_root_causes, generate_embedding
 
 router = APIRouter()
+security = HTTPBearer(auto_error=False)
+
+
+async def get_current_user_from_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+) -> Optional[User]:
+    """Get current authenticated user from JWT token."""
+    if not credentials:
+        return None
+    
+    from app.api.routes.auth import decode_token, TokenData
+    
+    token_data = decode_token(credentials.credentials)
+    if not token_data:
+        return None
+    
+    result = await db.execute(select(User).where(User.id == token_data.user_id))
+    return result.scalar_one_or_none()
 
 
 @router.post("/suggest", response_model=BugSuggestionResponse)
@@ -73,7 +93,11 @@ async def suggest_bug_fields(
 
 
 @router.post("", response_model=BugResponse)
-async def create_bug(bug: BugCreate, db: AsyncSession = Depends(get_db)):
+async def create_bug(
+    bug: BugCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_from_token)
+):
     classification = {"severity": "medium", "type": "general", "confidence": 0.5}
     
     try:
@@ -87,6 +111,10 @@ async def create_bug(bug: BugCreate, db: AsyncSession = Depends(get_db)):
     priority = bug.priority or classification.get("severity", "medium")
     severity = bug.severity or classification.get("severity", "medium")
     
+    # Auto-set created_by and reporter_id from authenticated user
+    bug_created_by = current_user.email if current_user else None
+    bug_reporter_id = current_user.id if current_user else None
+    
     new_bug = Bug(
         title=bug.title,
         description=bug.description,
@@ -98,8 +126,10 @@ async def create_bug(bug: BugCreate, db: AsyncSession = Depends(get_db)):
         actual_result=bug.actual_result,
         attachments=bug.attachments,
         assigned_to=bug.assigned_to,
-        created_by=bug.created_by,
-        reporter_id=bug.reporter_id,
+        created_by=bug_created_by,
+        reporter_id=bug_reporter_id,
+        duplicate_justification=bug.duplicate_justification,
+        duplicate_of_external_ids=bug.duplicate_of_external_ids,
     )
     db.add(new_bug)
     await db.commit()
@@ -565,6 +595,8 @@ async def push_bug_to_external(
             actual_result=bug.actual_result,
             attachments=bug.attachments,
             assigned_to=bug.assigned_to,
+            duplicate_of_external_ids=bug.duplicate_of_external_ids,
+            duplicate_justification=bug.duplicate_justification,
         )
         return PushBugResponse(**result)
     

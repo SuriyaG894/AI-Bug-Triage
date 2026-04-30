@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { authApi } from '../services/api';
 
 export default function ProfilePage() {
   const { user, logout } = useAuth();
@@ -7,14 +8,23 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'success' | 'error'>('success');
+  const [saving, setSaving] = useState(false);
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    // For now, just show a success message
-    // In a full implementation, you'd call an API to update the user
-    setMessage('Profile updated successfully!');
-    setMessageType('success');
-    setIsEditing(false);
+    setSaving(true);
+    setMessage('');
+    try {
+      await authApi.updateProfile(fullName);
+      setMessage('Profile updated successfully!');
+      setMessageType('success');
+      setIsEditing(false);
+    } catch (error: any) {
+      setMessage(error.response?.data?.detail || 'Failed to update profile');
+      setMessageType('error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!user) {

@@ -30,6 +30,10 @@ class UserLogin(BaseModel):
     password: str
 
 
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+
+
 class UserResponse(BaseModel):
     id: int
     email: str
@@ -243,6 +247,51 @@ async def logout():
     return {"message": "Logged out successfully"}
 
 
+@router.patch("/me")
+async def update_profile(
+    data: UserUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update current user's profile"""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    
+    token_data = decode_token(credentials.credentials)
+    if not token_data:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    result = await db.execute(select(User).where(User.id == token_data.user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    if data.full_name is not None:
+        user.full_name = data.full_name
+    
+    await db.commit()
+    await db.refresh(user)
+    
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_admin=user.is_admin,
+        created_at=user.created_at
+    )
+
+
 # ============================================================================
 # Optional: Get User from Token (for dependency injection)
 # ============================================================================
@@ -261,3 +310,22 @@ async def get_current_user_optional(
     
     result = await db.execute(select(User).where(User.id == token_data.user_id))
     return result.scalar_one_or_none()
+
+
+async def require_admin(
+    user: Optional[User] = Depends(get_current_user_optional)
+) -> User:
+    """Require admin user"""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    
+    return user

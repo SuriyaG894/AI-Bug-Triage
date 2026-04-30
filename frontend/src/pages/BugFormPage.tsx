@@ -1,5 +1,5 @@
 import { useForm } from 'react-hook-form';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -15,6 +15,7 @@ interface BugFormInputs {
   created_by: string;
   pushToAzure: boolean;
   assigned_to: string;
+  duplicate_justification?: string;
 }
 
 interface Attachment {
@@ -38,6 +39,9 @@ export default function BugFormPage() {
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [showJustificationModal, setShowJustificationModal] = useState(false);
+  const [justification, setJustification] = useState('');
+  const [pendingDuplicateBug, setPendingDuplicateBug] = useState<DuplicateCheckResponse | null>(null);
 
   const {
     register,
@@ -55,6 +59,12 @@ export default function BugFormPage() {
       actual_result: '',
     }
   });
+
+  useEffect(() => {
+    if (user?.email) {
+      setValue('created_by', user.email);
+    }
+  }, [user, setValue]);
 
   const title = watch('title', '');
   const description = watch('description', '');
@@ -100,6 +110,17 @@ export default function BugFormPage() {
   };
 
   const onSubmit = async (data: BugFormInputs) => {
+    // Check for ADO duplicates before submitting
+    if (duplicateResult && duplicateResult.similar_bugs.some(bug => bug.source === 'azure_devops')) {
+      setPendingDuplicateBug(duplicateResult);
+      setShowJustificationModal(true);
+      return;
+    }
+    
+    await submitBug(data, null, null);
+  };
+  
+  const submitBug = async (data: BugFormInputs, justText: string | null, extIds: string[] | null) => {
     setLoading(true);
     setSubmitSuccess(false);
     
@@ -116,6 +137,8 @@ export default function BugFormPage() {
         attachments: attachments.length > 0 ? attachments.map(a => ({ url: a.url, name: a.name })) : undefined,
         created_by: user?.email || data.created_by || undefined,
         reporter_id: user?.id,
+        duplicate_justification: justText || undefined,
+        duplicate_of_external_ids: extIds || undefined,
       });
       
       if (data.pushToAzure) {
@@ -138,6 +161,20 @@ export default function BugFormPage() {
     } finally {
       setLoading(false);
     }
+  };
+  
+  const handleJustificationSubmit = async (data: BugFormInputs) => {
+    if (!pendingDuplicateBug || !justification.trim()) return;
+    
+    // Get all external IDs and similarity from ADO duplicates
+    const adoDuplicates = pendingDuplicateBug.similar_bugs.filter(b => b.source === 'azure_devops');
+    const extIds = adoDuplicates.map(b => b.external_id).filter((id): id is string => !!id);
+    
+    setShowJustificationModal(false);
+    setJustification('');
+    setPendingDuplicateBug(null);
+    
+    await submitBug(data, justification, extIds);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -321,13 +358,14 @@ export default function BugFormPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Reported By
+                Reported By (auto-filled)
               </label>
               <input
                 type="text"
                 {...register('created_by')}
-                className="input-field"
-                placeholder="Your name (optional)"
+                className="input-field bg-gray-50"
+                placeholder="Loading..."
+                readOnly
               />
             </div>
 
@@ -497,49 +535,33 @@ export default function BugFormPage() {
               {loading ? 'Submitting...' : 'Submit Bug'}
             </button>
           </div>
-        )}
+)}
       </form>
 
-      {/* Modal Popup */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
             <div className="flex items-center justify-between mb-4">
-              <h3 className={`text-lg font-semibold ${modalType === 'success' ? 'text-green-600' : 'text-red-600'}`}>
-                {modalType === 'success' ? 'Success!' : 'Error'}
-              </h3>
-              <button
-                type="button"
-                onClick={closeModal}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
+              <h3 className="text-lg font-semibold text-green-600">Success!</h3>
+              <button type="button" onClick={closeModal} className="text-gray-400 hover:text-gray-600">
+                X
               </button>
             </div>
-            <p className="text-gray-700 mb-6 whitespace-pre-line">{modalMessage}</p>
-            <div className="flex justify-end gap-3">
-              {modalType === 'success' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowModal(false);
-                    setSubmitSuccess(false);
-                  }}
-                  className="btn-secondary"
-                >
-                  Create Another
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={closeModal}
-                className="btn-primary"
-              >
-                {modalType === 'success' ? 'View Bugs' : 'Close'}
-              </button>
+            <p className="text-gray-700 mb-6">{modalMessage}</p>
+            <button type="button" onClick={closeModal} className="btn-primary">Close</button>
+          </div>
+        </div>
+      )}
+
+      {showJustificationModal && pendingDuplicateBug && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-orange-600">Duplicate Found</h3>
+              <button type="button" onClick={() => setShowJustificationModal(false)} className="text-gray-400">X</button>
             </div>
+            <textarea value={justification} onChange={(e) => setJustification(e.target.value)} className="input-field" rows={3} placeholder="Enter justification" />
+            <button type="button" onClick={() => handleJustificationSubmit(watch())} className="btn-primary mt-4">Submit</button>
           </div>
         </div>
       )}

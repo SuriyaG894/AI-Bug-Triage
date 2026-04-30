@@ -6,10 +6,10 @@ import HomePage from './pages/HomePage';
 import BugListPage from './pages/BugListPage';
 import BugFormPage from './pages/BugFormPage';
 import BugDetailPage from './pages/BugDetailPage';
-import SettingsPage from './pages/SettingsPage';
 import ProfilePage from './pages/ProfilePage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import AdminPage from './pages/AdminPage';
 
 export default function App() {
   return (
@@ -23,8 +23,8 @@ export default function App() {
             <Route path="/bugs" element={<ProtectedRoute><BugListPage /></ProtectedRoute>} />
             <Route path="/bugs/new" element={<ProtectedRoute><BugFormPage /></ProtectedRoute>} />
             <Route path="/bugs/:id" element={<ProtectedRoute><BugDetailPage /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
           </Routes>
         </Layout>
       </BrowserRouter>

@@ -59,6 +59,8 @@ class Bug(Base):
     actual_result = Column(Text, nullable=True)
     attachments = Column(JSON, nullable=True)
     assigned_to = Column(String(100), nullable=True)
+    duplicate_justification = Column(Text, nullable=True)
+    duplicate_of_external_ids = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

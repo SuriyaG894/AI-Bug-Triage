@@ -38,10 +38,14 @@ export interface Bug {
   created_by: string | null;
   reporter_id?: number | null;
   repro_steps: string | null;
+  expected_result?: string | null;
+  actual_result?: string | null;
   assigned_to: string | null;
   created_at: string;
   updated_at: string;
   analysis: AnalysisResult | null;
+  duplicate_justification?: string | null;
+  duplicate_of_external_ids?: string[] | null;
 }
 
 export interface AnalysisResult {
@@ -63,6 +67,8 @@ export interface BugCreate {
   assigned_to?: string;
   created_by?: string;
   reporter_id?: number;
+  duplicate_justification?: string;
+  duplicate_of_external_ids?: string[];
 }
 
 export interface BugSuggestion {
@@ -81,7 +87,7 @@ export interface BugListResponse {
 export interface DuplicateCheckResponse {
   is_duplicate: boolean;
   similar_bugs: Array<{
-    id: number;
+    id: number | null;
     title: string;
     description: string;
     severity: string;
@@ -89,6 +95,8 @@ export interface DuplicateCheckResponse {
     status: string;
     source: string;
     similarity: number;
+    external_url?: string | null;
+    external_id?: string | null;
   }>;
   message: string;
 }
@@ -177,6 +185,76 @@ export const uploadApi = {
     }
     return response.json();
   },
+};
+
+export interface AdminUser {
+  id: number;
+  email: string;
+  full_name: string | null;
+  is_active: boolean;
+  is_admin: boolean;
+  created_at: string;
+}
+
+export interface AdminDashboardStats {
+  total_users: number;
+  active_users: number;
+  total_bugs: number;
+  open_bugs: number;
+  closed_bugs: number;
+  synced_bugs: number;
+}
+
+export interface AdminSyncStatus {
+  is_running: boolean;
+  interval_minutes: number;
+  auto_sync_enabled: boolean;
+  last_sync_at: string | null;
+  last_sync_result: Record<string, unknown> | null;
+  total_synced: number;
+}
+
+export const adminApi = {
+  listUsers: () => api.get<AdminUser[]>('/admin/users'),
+  
+  getUser: (id: number) => api.get<AdminUser>(`/admin/users/${id}`),
+  
+  updateUserRole: (id: number, is_admin: boolean) => 
+    api.patch(`/admin/users/${id}/role`, { is_admin }),
+  
+  updateUserStatus: (id: number, is_active: boolean) => 
+    api.patch(`/admin/users/${id}/status`, { is_active }),
+  
+  getDashboardStats: () => api.get<AdminDashboardStats>('/admin/dashboard/stats'),
+  
+  getSyncStatus: () => api.get<AdminSyncStatus>('/admin/sync/status'),
+  
+  triggerSync: () => api.post('/admin/sync/trigger'),
+  
+  updateSyncConfig: (interval_minutes: number, auto_sync_enabled: boolean) => 
+    api.post('/admin/sync/config', { interval_minutes, auto_sync_enabled }),
+  
+  startSync: () => api.post('/admin/sync/start'),
+  
+  stopSync: () => api.post('/admin/sync/stop'),
+  
+  listIntegrations: () => api.get('/admin/integrations'),
+  
+  testIntegration: (id: number) => api.post(`/admin/integrations/test/${id}`),
+};
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  full_name: string | null;
+  is_active: boolean;
+  is_admin: boolean;
+  created_at: string;
+}
+
+export const authApi = {
+  updateProfile: (full_name: string) => 
+    api.patch<AuthUser>('/auth/me', { full_name }),
 };
 
 export default api;
