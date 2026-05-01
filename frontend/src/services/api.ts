@@ -253,8 +253,25 @@ export interface AuthUser {
 }
 
 export const authApi = {
-  updateProfile: (full_name: string) => 
+  updateProfile: (full_name: string) =>
     api.patch<AuthUser>('/auth/me', { full_name }),
+  
+  changePassword: (current_password: string, new_password: string) =>
+    api.post('/auth/change-password', { current_password, new_password }),
+  
+  forgotPassword: (email: string) =>
+    api.post('/auth/forgot-password', { email }),
+  
+  verifyOTP: (email: string, otp: string) =>
+    api.post<{ reset_token: string; message: string }>('/auth/verify-otp', { email, otp }),
+  
+  resetPassword: (reset_token: string, new_password: string) =>
+    api.post('/auth/reset-password', { reset_token, new_password }),
 };
+
+export interface PasswordResetResponse {
+  reset_token?: string;
+  message: string;
+}
 
 export default api;

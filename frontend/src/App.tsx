@@ -10,23 +10,23 @@ import ProfilePage from './pages/ProfilePage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import AdminPage from './pages/AdminPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Layout>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
-            <Route path="/bugs" element={<ProtectedRoute><BugListPage /></ProtectedRoute>} />
-            <Route path="/bugs/new" element={<ProtectedRoute><BugFormPage /></ProtectedRoute>} />
-            <Route path="/bugs/:id" element={<ProtectedRoute><BugDetailPage /></ProtectedRoute>} />
-            <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
-            <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
-          </Routes>
-        </Layout>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/" element={<Layout><ProtectedRoute><HomePage /></ProtectedRoute></Layout>} />
+          <Route path="/bugs" element={<Layout><ProtectedRoute><BugListPage /></ProtectedRoute></Layout>} />
+          <Route path="/bugs/new" element={<Layout><ProtectedRoute><BugFormPage /></ProtectedRoute></Layout>} />
+          <Route path="/bugs/:id" element={<Layout><ProtectedRoute><BugDetailPage /></ProtectedRoute></Layout>} />
+          <Route path="/profile" element={<Layout><ProtectedRoute><ProfilePage /></ProtectedRoute></Layout>} />
+          <Route path="/admin" element={<Layout><ProtectedRoute><AdminPage /></ProtectedRoute></Layout>} />
+        </Routes>
       </BrowserRouter>
     </AuthProvider>
   );

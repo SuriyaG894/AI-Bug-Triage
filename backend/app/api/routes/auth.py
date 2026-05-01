@@ -34,6 +34,11 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class UserResponse(BaseModel):
     id: int
     email: str
@@ -292,6 +297,53 @@ async def update_profile(
     )
 
 
+@router.post("/change-password")
+async def change_password(
+    data: ChangePasswordRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Change password for authenticated user"""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    
+    token_data = decode_token(credentials.credentials)
+    if not token_data:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    result = await db.execute(select(User).where(User.id == token_data.user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    
+    if len(data.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters"
+        )
+    
+    user.password_hash = hash_password(data.new_password)
+    await db.commit()
+    
+    return {"message": "Password changed successfully"}
+
+
 # ============================================================================
 # Optional: Get User from Token (for dependency injection)
 # ============================================================================
@@ -312,6 +364,24 @@ async def get_current_user_optional(
     return result.scalar_one_or_none()
 
 
+# ============================================================================
+# Password Reset Endpoints
+# ============================================================================
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class VerifyOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
+
+class ResetPasswordRequest(BaseModel):
+    reset_token: str
+    new_password: str
+
+
 async def require_admin(
     user: Optional[User] = Depends(get_current_user_optional)
 ) -> User:
@@ -329,3 +399,177 @@ async def require_admin(
         )
     
     return user
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    data: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate and send OTP for password reset"""
+    from app.core.database import PasswordResetOTP
+    from app.services.email_service import get_email_service
+    
+    result = await db.execute(select(User).where(User.email == data.email))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        return {"message": "If the email exists, an OTP has been sent"}
+    
+    otp_code = secrets.token_hex(3)[:6]
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    
+    existing_otp = await db.execute(
+        select(PasswordResetOTP).where(
+            PasswordResetOTP.user_id == user.id,
+            PasswordResetOTP.used == False
+        )
+    )
+    old_otp = existing_otp.scalar_one_or_none()
+    if old_otp:
+        old_otp.used = True
+        await db.commit()
+    
+    new_otp = PasswordResetOTP(
+        user_id=user.id,
+        otp=otp_code,
+        expires_at=expires_at
+    )
+    db.add(new_otp)
+    await db.commit()
+    
+    email_service = get_email_service()
+    html_content = email_service.get_password_reset_html(otp_code, user.full_name)
+    
+    sent = await email_service.send_email(
+        to_email=user.email,
+        subject="Your Password Reset Code - Bug Triage",
+        html_content=html_content
+    )
+    
+    if not sent:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send email. Please try again later."
+        )
+    
+    return {"message": "If the email exists, an OTP has been sent"}
+
+
+@router.post("/verify-otp")
+async def verify_otp(
+    data: VerifyOTPRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Verify OTP and return reset token"""
+    from app.core.database import PasswordResetOTP
+    
+    result = await db.execute(select(User).where(User.email == data.email))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        return {"message": "Invalid OTP"}
+    
+    otp_result = await db.execute(
+        select(PasswordResetOTP).where(
+            PasswordResetOTP.user_id == user.id,
+            PasswordResetOTP.used == False
+        ).order_by(PasswordResetOTP.created_at.desc())
+    )
+    otp_record = otp_result.scalar_one_or_none()
+    
+    if not otp_record:
+        return {"message": "Invalid OTP"}
+    
+    if otp_record.locked_until and otp_record.locked_until > datetime.utcnow():
+        remaining = int((otp_record.locked_until - datetime.utcnow()).total_seconds() / 60)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Account locked. Try again in {remaining} minutes."
+        )
+    
+    if otp_record.expires_at < datetime.utcnow():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP has expired. Please request a new one."
+        )
+    
+    if otp_record.attempts >= 3:
+        otp_record.locked_until = datetime.utcnow() + timedelta(minutes=15)
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed attempts. Try again in 15 minutes."
+        )
+    
+    if otp_record.otp != data.otp:
+        otp_record.attempts += 1
+        remaining = 3 - otp_record.attempts
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid OTP. {remaining} attempts remaining."
+        )
+    
+    otp_record.used = True
+    await db.commit()
+    
+    reset_token = create_access_token(
+        {"sub": str(user.id), "type": "password_reset"},
+        expires_delta=timedelta(minutes=15)
+    )
+    
+    return {"reset_token": reset_token, "message": "OTP verified successfully"}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    data: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Reset password using reset token"""
+    try:
+        payload = jwt.decode(
+            data.reset_token, 
+            settings.SECRET_KEY, 
+            algorithms=[settings.ALGORITHM]
+        )
+        
+        if payload.get("type") != "password_reset":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid reset token"
+            )
+        
+        user_id = int(payload.get("sub"))
+        
+        if len(data.new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters"
+            )
+        
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        user.password_hash = hash_password(data.new_password)
+        await db.commit()
+        
+        return {"message": "Password reset successful. Please login with your new password."}
+    
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset token has expired"
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid reset token"
+        )
