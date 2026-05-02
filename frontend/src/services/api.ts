@@ -18,6 +18,17 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      console.error('[API] 401 Unauthorized for:', error.config?.url);
+      console.error('[API] Token present:', !!currentToken);
+    }
+    return Promise.reject(error);
+  }
+);
+
 export const setToken = (token: string | null) => {
   currentToken = token;
 };
@@ -35,6 +46,7 @@ export interface Bug {
   source: string;
   external_id: string | null;
   push_to_external: boolean;
+  project_id: number | null;
   created_by: string | null;
   reporter_id?: number | null;
   repro_steps: string | null;
@@ -69,6 +81,7 @@ export interface BugCreate {
   reporter_id?: number;
   duplicate_justification?: string;
   duplicate_of_external_ids?: string[];
+  project_id?: number | null;
 }
 
 export interface BugSuggestion {
@@ -119,27 +132,27 @@ export interface PushBugResponse {
 }
 
 export const bugApi = {
-  list: (params?: { severity?: string; type?: string; status?: string; search?: string }) =>
+  list: (params?: { severity?: string; type?: string; status?: string; search?: string; project_id?: number }) =>
     api.get<BugListResponse>('/bugs', { params }),
-  
+
   get: (id: number) => api.get<Bug>(`/bugs/${id}`),
-  
+
   create: (data: BugCreate) => api.post<Bug>('/bugs', data),
-  
+
   update: (id: number, data: Partial<Bug>) => api.put<Bug>(`/bugs/${id}`, data),
-  
+
   delete: (id: number) => api.delete(`/bugs/${id}`),
-  
+
   checkDuplicate: (title: string, description: string) =>
     api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { title, description }),
-  
+
   suggest: (title: string, description: string, reproSteps?: string) =>
     api.post<BugSuggestion>('/bugs/suggest', {
       title,
       description,
       repro_steps: reproSteps
     }),
-  
+
   pushToExternal: (bugId: number, toolType: string, projectKey?: string) =>
     api.post<PushBugResponse>(`/bugs/${bugId}/push`, null, {
       params: { tool_type: toolType, project_key: projectKey }
@@ -196,6 +209,31 @@ export interface AdminUser {
   created_at: string;
 }
 
+export interface Project {
+  id: number;
+  name: string;
+  ado_project_id: string | null;
+  ado_project_name: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  assigned_users?: Array<{ user_id: number; email: string; full_name: string | null }>;
+}
+
+export const projectApi = {
+  list: () => api.get<Project[]>('/admin/projects'),
+  get: (id: number) => api.get<Project>(`/admin/projects/${id}`),
+  create: (data: { name: string; description?: string; ado_project_id?: string; ado_project_name?: string }) =>
+    api.post<Project>('/admin/projects', data),
+  update: (id: number, data: { name?: string; description?: string; is_active?: boolean }) =>
+    api.put<Project>(`/admin/projects/${id}`, data),
+  delete: (id: number) => api.delete(`/admin/projects/${id}`),
+  assignUsers: (projectId: number, userIds: number[]) =>
+    api.post(`/admin/projects/${projectId}/assign-users`, { user_ids: userIds }),
+  syncFromADO: () => api.post('/admin/projects/sync-from-ado'),
+  myProjects: () => api.get<Project[]>('/admin/my/projects'),
+};
+
 export interface AdminDashboardStats {
   total_users: number;
   active_users: number;
@@ -239,6 +277,9 @@ export const adminApi = {
   stopSync: () => api.post('/admin/sync/stop'),
   
   listIntegrations: () => api.get('/admin/integrations'),
+  
+  testIntegrationCredentials: (data: { tool_type: string; credentials: string }) =>
+    api.post('/admin/integrations/test-credentials', data),
   
   testIntegration: (id: number) => api.post(`/admin/integrations/test/${id}`),
 };

@@ -10,6 +10,8 @@ from sqlalchemy import (
     JSON,
     Float,
     text,
+    ForeignKey,
+    Table,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
@@ -52,6 +54,7 @@ class Bug(Base):
     source = Column(String(20), default="internal")
     external_id = Column(String(100), nullable=True)
     push_to_external = Column(Boolean, default=False)
+    project_id = Column(Integer, nullable=True, index=True)
     created_by = Column(String(100), nullable=True)
     reporter_id = Column(Integer, nullable=True)
     repro_steps = Column(Text, nullable=True)
@@ -123,6 +126,28 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    ado_project_id = Column(String(100), nullable=True, index=True)
+    ado_project_name = Column(String(255), nullable=True)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UserProjectAssignment(Base):
+    __tablename__ = "user_project_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class PasswordResetOTP(Base):

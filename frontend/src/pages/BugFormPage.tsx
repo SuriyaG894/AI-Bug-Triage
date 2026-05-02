@@ -1,8 +1,11 @@
-import { useForm } from 'react-hook-form';
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi } from '../services/api';
+import { useForm } from 'react-hook-form';
+import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi, projectApi, Project } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { Badge, Card, Modal } from '../components';
+import { ArrowLeft, Loader2, Brain, AlertTriangle, Paperclip, X, ExternalLink } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 interface BugFormInputs {
   title: string;
@@ -15,7 +18,6 @@ interface BugFormInputs {
   created_by: string;
   pushToAzure: boolean;
   assigned_to: string;
-  duplicate_justification?: string;
 }
 
 interface Attachment {
@@ -28,10 +30,6 @@ export default function BugFormPage() {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
-  const [submitSuccess, setSubmitSuccess] = useState(false);
-  const [showModal, setShowModal] = useState(false);
-  const [modalMessage, setModalMessage] = useState('');
-  const [modalType, setModalType] = useState<'success' | 'error'>('success');
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const [gettingSuggestion, setGettingSuggestion] = useState(false);
   const [duplicateResult, setDuplicateResult] = useState<DuplicateCheckResponse | null>(null);
@@ -42,6 +40,18 @@ export default function BugFormPage() {
   const [showJustificationModal, setShowJustificationModal] = useState(false);
   const [justification, setJustification] = useState('');
   const [pendingDuplicateBug, setPendingDuplicateBug] = useState<DuplicateCheckResponse | null>(null);
+  const [formData, setFormData] = useState<BugFormInputs | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+
+  useEffect(() => {
+    projectApi.myProjects().then(res => {
+      setProjects(res.data);
+      if (res.data.length === 1) {
+        setSelectedProjectId(res.data[0].id);
+      }
+    }).catch(() => {});
+  }, []);
 
   const {
     register,
@@ -109,21 +119,9 @@ export default function BugFormPage() {
     }
   };
 
-  const onSubmit = async (data: BugFormInputs) => {
-    // Check for ADO duplicates before submitting
-    if (duplicateResult && duplicateResult.similar_bugs.some(bug => bug.source === 'azure_devops')) {
-      setPendingDuplicateBug(duplicateResult);
-      setShowJustificationModal(true);
-      return;
-    }
-    
-    await submitBug(data, null, null);
-  };
-  
   const submitBug = async (data: BugFormInputs, justText: string | null, extIds: string[] | null) => {
     setLoading(true);
-    setSubmitSuccess(false);
-    
+
     try {
       const response = await bugApi.create({
         title: data.title,
@@ -139,34 +137,45 @@ export default function BugFormPage() {
         reporter_id: user?.id,
         duplicate_justification: justText || undefined,
         duplicate_of_external_ids: extIds || undefined,
+        project_id: selectedProjectId,
       });
       
       if (data.pushToAzure) {
         try {
           const pushResp = await bugApi.pushToExternal(response.data.id, 'azure_devops');
           if (pushResp.data.success) {
-            showSuccessModal(`Bug created and pushed to Azure DevOps!\nWork Item ID: ${pushResp.data.external_id}`);
+            toast.success(`Bug created and pushed to Azure DevOps! Work Item: ${pushResp.data.external_id}`);
           } else {
-            showErrorModal(`Bug created but push failed: ${pushResp.data.message}`);
+            toast.error(`Bug created but push failed: ${pushResp.data.message}`);
           }
         } catch (pushErr: any) {
-          showErrorModal(`Bug created but push failed: ${pushErr.response?.data?.detail || 'Push failed'}`);
+          toast.error(`Bug created but push failed: ${pushErr.response?.data?.detail || 'Push failed'}`);
         }
       } else {
-        showSuccessModal(`Bug "${response.data.title}" created successfully!\nBug ID: ${response.data.id}`);
+        toast.success(`Bug "${response.data.title}" created successfully!`);
       }
+      navigate('/bugs');
     } catch (error: any) {
-      console.error('Error creating bug:', error);
-      showErrorModal(error.response?.data?.detail || 'Failed to create bug');
+      toast.error(error.response?.data?.detail || 'Failed to create bug');
     } finally {
       setLoading(false);
     }
   };
-  
-  const handleJustificationSubmit = async (data: BugFormInputs) => {
-    if (!pendingDuplicateBug || !justification.trim()) return;
+
+  const onSubmit = async (data: BugFormInputs) => {
+    if (duplicateResult && duplicateResult.similar_bugs.some(bug => bug.source === 'azure_devops')) {
+      setPendingDuplicateBug(duplicateResult);
+      setShowJustificationModal(true);
+      setFormData(data);
+      return;
+    }
     
-    // Get all external IDs and similarity from ADO duplicates
+    await submitBug(data, null, null);
+  };
+  
+  const handleJustificationSubmit = async () => {
+    if (!pendingDuplicateBug || !justification.trim() || !formData) return;
+    
     const adoDuplicates = pendingDuplicateBug.similar_bugs.filter(b => b.source === 'azure_devops');
     const extIds = adoDuplicates.map(b => b.external_id).filter((id): id is string => !!id);
     
@@ -174,7 +183,7 @@ export default function BugFormPage() {
     setJustification('');
     setPendingDuplicateBug(null);
     
-    await submitBug(data, justification, extIds);
+    await submitBug(formData, justification, extIds);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -185,7 +194,7 @@ export default function BugFormPage() {
       const result = await uploadApi.upload(file);
       setAttachments([...attachments, { name: file.name, url: result.url }]);
     } catch (err) {
-      console.error('Upload failed:', err);
+      toast.error('Upload failed');
     } finally {
       setUploading(false);
     }
@@ -195,32 +204,25 @@ export default function BugFormPage() {
     setAttachments(attachments.filter((_, i) => i !== idx));
   };
 
-  const showSuccessModal = (message: string) => {
-    setModalMessage(message);
-    setModalType('success');
-    setShowModal(true);
-  };
-
-  const showErrorModal = (message: string) => {
-    setModalMessage(message);
-    setModalType('error');
-    setShowModal(true);
-  };
-
-  const closeModal = () => {
-    setShowModal(false);
-    if (modalType === 'success') {
-      navigate('/bugs');
-    }
-  };
-
   return (
-    <div className="max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Report New Bug</h1>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <button
+          onClick={() => navigate('/bugs')}
+          className="btn-icon"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Report New Bug</h1>
+          <p className="text-sm text-gray-500">Fill in the details to create a new bug report</p>
+        </div>
+      </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-        {/* Basic Info Card */}
-        <div className="card">
+        {/* Basic Info */}
+        <Card>
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -237,6 +239,25 @@ export default function BugFormPage() {
               )}
             </div>
 
+            {projects.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Project {user?.is_admin ? '(optional)' : <span className="text-red-500">*</span>}
+                </label>
+                <select
+                  value={selectedProjectId || ''}
+                  onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
+                  className="input-field"
+                >
+                  {!user?.is_admin && <option value="">Select a project...</option>}
+                  {user?.is_admin && <option value="">No project (optional)</option>}
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Description <span className="text-red-500">*</span>
@@ -245,7 +266,7 @@ export default function BugFormPage() {
                 {...register('description', { required: 'Description is required', minLength: 20 })}
                 className="input-field"
                 rows={5}
-                placeholder="Detailed description of the bug, including expected vs actual behavior"
+                placeholder="Detailed description of the bug"
                 onBlur={checkDuplicate}
               />
               {errors.description && (
@@ -264,63 +285,65 @@ export default function BugFormPage() {
                 })}
                 className="input-field"
                 rows={4}
-                placeholder="1. Go to login page\n2. Enter valid credentials\n3. Click login button\n4. App crashes with error"
+                placeholder="1. Go to login page\n2. Enter valid credentials\n3. Click login button"
               />
               {errors.repro_steps && (
                 <p className="mt-1 text-sm text-red-600">{errors.repro_steps.message}</p>
               )}
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Expected Result <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                {...register('expected_result', { 
-                  required: 'Expected result is required', 
-                  minLength: { value: 10, message: 'Please provide expected result (at least 10 characters)' }
-                })}
-                className="input-field"
-                rows={3}
-                placeholder="What should happen when the steps are followed?"
-              />
-              {errors.expected_result && (
-                <p className="mt-1 text-sm text-red-600">{errors.expected_result.message}</p>
-              )}
-            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Expected Result <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  {...register('expected_result', { 
+                    required: 'Expected result is required', 
+                    minLength: { value: 10, message: 'At least 10 characters' }
+                  })}
+                  className="input-field"
+                  rows={3}
+                  placeholder="What should happen?"
+                />
+                {errors.expected_result && (
+                  <p className="mt-1 text-sm text-red-600">{errors.expected_result.message}</p>
+                )}
+              </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Actual Result <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                {...register('actual_result', { 
-                  required: 'Actual result is required', 
-                  minLength: { value: 10, message: 'Please provide actual result (at least 10 characters)' }
-                })}
-                className="input-field"
-                rows={3}
-                placeholder="What actually happened?"
-              />
-              {errors.actual_result && (
-                <p className="mt-1 text-sm text-red-600">{errors.actual_result.message}</p>
-              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Actual Result <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  {...register('actual_result', { 
+                    required: 'Actual result is required', 
+                    minLength: { value: 10, message: 'At least 10 characters' }
+                  })}
+                  className="input-field"
+                  rows={3}
+                  placeholder="What actually happened?"
+                />
+                {errors.actual_result && (
+                  <p className="mt-1 text-sm text-red-600">{errors.actual_result.message}</p>
+                )}
+              </div>
             </div>
 
             <button
               type="button"
               onClick={fetchSuggestion}
               disabled={gettingSuggestion || !title || title.length < 5 || !description || description.length < 20 || !reproSteps || reproSteps.length < 20}
-              className="mt-2 text-sm text-blue-600 hover:text-blue-800 disabled:text-gray-400 disabled:cursor-not-allowed"
+              className="text-sm text-primary-600 hover:text-primary-800 disabled:text-gray-400 disabled:cursor-not-allowed font-medium"
             >
-              {gettingSuggestion ? 'Analyzing...' : 'Get Priority & Severity Suggestion'}
+              {gettingSuggestion ? 'Analyzing...' : 'Get AI Suggestion'}
             </button>
           </div>
-        </div>
+        </Card>
 
-        {/* Priority & Severity Card */}
-        <div className="card">
-          <div className="grid grid-cols-2 gap-4">
+        {/* Priority & Severity */}
+        <Card>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Priority <span className="text-red-500">*</span>
@@ -351,20 +374,19 @@ export default function BugFormPage() {
               </select>
             </div>
           </div>
-        </div>
+        </Card>
 
-        {/* User Info Card */}
-        <div className="card">
+        {/* User Info & Attachments */}
+        <Card>
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Reported By (auto-filled)
+                Reported By
               </label>
               <input
                 type="text"
                 {...register('created_by')}
                 className="input-field bg-gray-50"
-                placeholder="Loading..."
                 readOnly
               />
             </div>
@@ -377,36 +399,41 @@ export default function BugFormPage() {
                 type="text"
                 {...register('assigned_to')}
                 className="input-field"
-                placeholder="user@email.com (for Azure DevOps)"
+                placeholder="user@email.com"
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Attachments (Proof)
+                Attachments
               </label>
               <input
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
                 accept="image/*,video/*"
-                multiple
-                className="input-field file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                className="input-field"
               />
-              {uploading && <p className="text-sm text-gray-500">Uploading...</p>}
+              {uploading && (
+                <div className="flex items-center gap-2 mt-2 text-sm text-gray-500">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Uploading...
+                </div>
+              )}
               {attachments.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
+                <div className="mt-3 flex flex-wrap gap-2">
                   {attachments.map((att, idx) => (
-                    <div key={idx} className="text-sm bg-gray-100 px-2 py-1 rounded flex items-center gap-1">
-                      <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                    <div key={idx} className="inline-flex items-center gap-2 bg-gray-100 px-3 py-1.5 rounded-lg text-sm">
+                      <Paperclip className="w-4 h-4 text-gray-500" />
+                      <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">
                         {att.name}
                       </a>
                       <button
                         type="button"
                         onClick={() => removeAttachment(idx)}
-                        className="text-red-500 hover:text-red-700 ml-1"
+                        className="text-gray-400 hover:text-red-500"
                       >
-                        ×
+                        <X className="w-4 h-4" />
                       </button>
                     </div>
                   ))}
@@ -414,89 +441,71 @@ export default function BugFormPage() {
               )}
             </div>
           </div>
-        </div>
+        </Card>
 
-        {/* AI Suggestion Panel */}
+        {/* AI Suggestion */}
         {gettingSuggestion && (
-          <div className="card bg-blue-50 border border-blue-200">
-            <div className="flex items-center">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-3"></div>
-              <span className="text-blue-800">Analyzing bug details...</span>
+          <Card className="bg-blue-50 border-blue-200">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+              <span className="text-blue-800 font-medium">Analyzing bug details...</span>
             </div>
-          </div>
+          </Card>
         )}
 
         {showSuggestion && suggestion && (
-          <div className="card bg-blue-50 border border-blue-200">
-            <div className="flex justify-between items-start mb-3">
-              <h3 className="text-lg font-semibold text-blue-800">
-                AI Suggestion
-              </h3>
-              <button
-                type="button"
-                onClick={applySuggestion}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-              >
-                Apply Suggestions
+          <Card className="bg-blue-50 border-blue-200">
+            <div className="flex items-center gap-2 mb-3">
+              <Brain className="w-5 h-5 text-blue-600" />
+              <h3 className="text-lg font-semibold text-blue-800">AI Suggestion</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-3">{suggestion.reasoning}</p>
+            <div className="flex gap-3 mb-4">
+              <Badge label={`Priority: ${suggestion.priority.toUpperCase()}`} />
+              <Badge label={`Severity: ${suggestion.severity.toUpperCase()}`} />
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={applySuggestion} className="btn-primary">
+                Apply Suggestion
+              </button>
+              <button type="button" onClick={() => setShowSuggestion(false)} className="btn-secondary">
+                Dismiss
               </button>
             </div>
-            <div className="bg-white p-3 rounded border border-blue-100 mb-3">
-              <p className="text-sm text-gray-600 mb-2">{suggestion.reasoning}</p>
-              <div className="flex gap-4">
-                <div>
-                  <span className="text-sm text-gray-500">Priority:</span>
-                  <span className="ml-2 px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                    {suggestion.priority.toUpperCase()}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-500">Severity:</span>
-                  <span className="ml-2 px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                    {suggestion.severity.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowSuggestion(false)}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              Dismiss
-            </button>
-          </div>
+          </Card>
         )}
 
-        {/* Duplicate Check Results */}
+        {/* Duplicate Check */}
         {checkingDuplicate && (
-          <div className="card bg-yellow-50 border border-yellow-200">
-            <div className="flex items-center">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-600 mr-3"></div>
-              <span className="text-yellow-800">Checking for duplicates...</span>
+          <Card className="bg-yellow-50 border-yellow-200">
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-5 h-5 text-yellow-600 animate-spin" />
+              <span className="text-yellow-800 font-medium">Checking for duplicates...</span>
             </div>
-          </div>
+          </Card>
         )}
 
         {duplicateResult && duplicateResult.similar_bugs.length > 0 && (
-          <div className="card bg-orange-50 border border-orange-200">
-            <h3 className="text-lg font-semibold text-orange-800 mb-3">
-              Similar Bugs Found
-            </h3>
+          <Card className="bg-orange-50 border-orange-200">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertTriangle className="w-5 h-5 text-orange-600" />
+              <h3 className="text-lg font-semibold text-orange-800">
+                Similar Bugs Found ({duplicateResult.similar_bugs.length})
+              </h3>
+            </div>
             <div className="space-y-2">
-              {duplicateResult.similar_bugs.slice(0, 3).map((bug) => (
-                <div key={bug.id || bug.external_id || Math.random()} className="bg-white p-3 rounded border border-orange-100">
+              {duplicateResult.similar_bugs.slice(0, 3).map((bug, idx) => (
+                <div key={bug.id || bug.external_id || idx} className="bg-white p-3 rounded-lg border border-orange-100">
                   <div className="flex justify-between items-start">
-                    <p className="font-medium">{bug.title}</p>
+                    <p className="font-medium text-sm">{bug.title}</p>
                     {bug.source === 'azure_devops' && (
-                      <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded">ADO</span>
+                      <Badge label="ADO" />
                     )}
                   </div>
                   {bug.source === 'azure_devops' && bug.external_url && (
-                    <a href={bug.external_url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline flex items-center gap-1 mt-1">
+                    <a href={bug.external_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 mt-1">
                       View in Azure DevOps
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                      </svg>
+                      <ExternalLink className="w-3 h-3" />
                     </a>
                   )}
                   <p className="text-xs text-gray-500 mt-1">
@@ -506,65 +515,101 @@ export default function BugFormPage() {
                 </div>
               ))}
             </div>
-          </div>
+          </Card>
         )}
 
         {/* Submit */}
-        {!submitSuccess && (
-          <div className="flex justify-end gap-4 items-center">
-            <label className="flex items-center text-sm text-gray-600 mr-4">
-              <input
-                type="checkbox"
-                {...register('pushToAzure')}
-                className="mr-2"
-              />
-              Push to Azure DevOps
-            </label>
-            <button
-              type="button"
-              onClick={() => navigate('/bugs')}
-              className="btn-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn-primary disabled:opacity-50"
-            >
-              {loading ? 'Submitting...' : 'Submit Bug'}
-            </button>
-          </div>
-)}
+        <div className="flex justify-end gap-3 items-center">
+          <label className="flex items-center text-sm text-gray-600">
+            <input
+              type="checkbox"
+              {...register('pushToAzure')}
+              className="mr-2 rounded border-gray-300"
+            />
+            Push to Azure DevOps
+          </label>
+          <button
+            type="button"
+            onClick={() => navigate('/bugs')}
+            className="btn-secondary"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={loading}
+            className="btn-primary disabled:opacity-50"
+          >
+            {loading ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Submitting...
+              </span>
+            ) : 'Submit Bug'}
+          </button>
+        </div>
       </form>
 
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-green-600">Success!</h3>
-              <button type="button" onClick={closeModal} className="text-gray-400 hover:text-gray-600">
-                X
+      {/* Justification Modal */}
+      <Modal
+        isOpen={showJustificationModal}
+        onClose={() => {
+          setShowJustificationModal(false);
+          setPendingDuplicateBug(null);
+        }}
+        title="Duplicate Bug Detected"
+        description="Similar bugs exist in Azure DevOps. Please provide justification to proceed."
+        size="lg"
+      >
+        {pendingDuplicateBug && (
+          <div className="space-y-4">
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-orange-800 mb-2">Similar Bugs:</h4>
+              <ul className="space-y-2">
+                {pendingDuplicateBug.similar_bugs
+                  .filter(b => b.source === 'azure_devops')
+                  .slice(0, 3)
+                  .map((bug, idx) => (
+                    <li key={idx} className="flex items-center justify-between text-sm">
+                      <span className="text-gray-700">{bug.title}</span>
+                      <span className="text-orange-600 font-medium ml-2">{Math.round(bug.similarity * 100)}%</span>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Justification <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={justification}
+                onChange={(e) => setJustification(e.target.value)}
+                className="input-field"
+                rows={4}
+                placeholder="Explain why this is not a duplicate or why it should be created anyway..."
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowJustificationModal(false);
+                  setPendingDuplicateBug(null);
+                }}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleJustificationSubmit}
+                disabled={!justification.trim()}
+                className="btn-primary disabled:opacity-50"
+              >
+                Submit with Justification
               </button>
             </div>
-            <p className="text-gray-700 mb-6">{modalMessage}</p>
-            <button type="button" onClick={closeModal} className="btn-primary">Close</button>
           </div>
-        </div>
-      )}
-
-      {showJustificationModal && pendingDuplicateBug && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-orange-600">Duplicate Found</h3>
-              <button type="button" onClick={() => setShowJustificationModal(false)} className="text-gray-400">X</button>
-            </div>
-            <textarea value={justification} onChange={(e) => setJustification(e.target.value)} className="input-field" rows={3} placeholder="Enter justification" />
-            <button type="button" onClick={() => handleJustificationSubmit(watch())} className="btn-primary mt-4">Submit</button>
-          </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </div>
   );
 }

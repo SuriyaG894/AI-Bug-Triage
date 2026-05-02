@@ -183,14 +183,6 @@ export default function ForgotPasswordPage() {
     }
   };
 
-  const getStepDescription = () => {
-    switch (step) {
-      case 'email': return 'Enter your email to receive a verification code';
-      case 'otp': return `Code sent to ${email}`;
-      case 'reset': return 'Create a new password for your account';
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">

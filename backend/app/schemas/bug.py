@@ -22,6 +22,7 @@ class BugCreate(BugBase):
     reporter_id: Optional[int] = None
     duplicate_justification: Optional[str] = None
     duplicate_of_external_ids: Optional[List[str]] = None
+    project_id: Optional[int] = None
 
 
 class BugUpdate(BaseModel):
@@ -34,6 +35,7 @@ class BugUpdate(BaseModel):
     repro_steps: Optional[str] = None
     expected_result: Optional[str] = None
     actual_result: Optional[str] = None
+    project_id: Optional[int] = None
 
 
 class BugSuggestionRequest(BaseModel):
@@ -57,6 +59,7 @@ class BugResponse(BugBase):
     source: str
     external_id: Optional[str]
     push_to_external: bool
+    project_id: Optional[int] = None
     created_by: Optional[str]
     created_at: datetime
     updated_at: datetime

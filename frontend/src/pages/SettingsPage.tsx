@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { Settings, User, Shield, Bell, Palette, Globe, Save, Loader2, Monitor, Moon, Sun } from 'lucide-react';
+import Card from '../components/Card';
+import toast from 'react-hot-toast';
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -8,7 +11,9 @@ export default function SettingsPage() {
     email: '',
   });
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
+  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('light');
+  const [emailNotifications, setEmailNotifications] = useState(true);
+  const [language, setLanguage] = useState('en');
 
   useEffect(() => {
     if (user) {
@@ -21,41 +26,37 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setSaving(true);
-    setMessage('');
     try {
       await new Promise(resolve => setTimeout(resolve, 500));
-      setMessage('Settings saved successfully');
+      toast.success('Settings saved successfully');
     } catch (error) {
-      console.error('Error saving settings:', error);
-      setMessage('Failed to save settings');
+      toast.error('Failed to save settings');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Settings</h1>
-      
-      <div className="card mb-6">
-        <h2 className="text-lg font-semibold mb-4">Profile Settings</h2>
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
+        <Settings className="size-6 text-text-secondary" />
+        <h1 className="page-title">Settings</h1>
+      </div>
+
+      <Card header={<span className="flex items-center gap-2 font-medium"><User className="size-4" />Profile Settings</span>}>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Email
-            </label>
+            <label className="section-label">Email</label>
             <input
               type="email"
               value={formData.email}
               disabled
-              className="input-field bg-gray-50"
+              className="input-field bg-surface-secondary text-text-muted cursor-not-allowed"
             />
-            <p className="text-xs text-gray-500 mt-1">Email cannot be changed</p>
+            <p className="text-xs text-text-muted mt-1">Email cannot be changed</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Full Name
-            </label>
+            <label className="section-label">Full Name</label>
             <input
               type="text"
               value={formData.full_name}
@@ -64,30 +65,98 @@ export default function SettingsPage() {
               placeholder="Enter your full name"
             />
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="btn-primary"
-            >
+          <div className="flex gap-2 pt-2">
+            <button onClick={handleSave} disabled={saving} className="btn-primary">
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
               {saving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
-          {message && (
-            <p className={`text-sm ${message.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>
-              {message}
-            </p>
-          )}
         </div>
-      </div>
+      </Card>
 
-      <div className="card">
-        <h2 className="text-lg font-semibold mb-4">Account Info</h2>
-        <div className="space-y-2 text-sm text-gray-600">
-          <p><strong>Role:</strong> {user?.is_admin ? 'Admin' : 'User'}</p>
-          <p><strong>Status:</strong> {user?.is_active ? 'Active' : 'Inactive'}</p>
+      <Card header={<span className="flex items-center gap-2 font-medium"><Shield className="size-4" />Account Info</span>}>
+        <dl className="space-y-3">
+          <div className="flex items-center justify-between py-2 border-b border-border">
+            <dt className="text-sm text-text-secondary">Role</dt>
+            <dd className="text-sm text-text-primary font-medium">{user?.is_admin ? 'Admin' : 'User'}</dd>
+          </div>
+          <div className="flex items-center justify-between py-2 border-b border-border">
+            <dt className="text-sm text-text-secondary">Status</dt>
+            <dd className="text-sm text-text-primary font-medium">{user?.is_active ? 'Active' : 'Inactive'}</dd>
+          </div>
+          <div className="flex items-center justify-between py-2">
+            <dt className="text-sm text-text-secondary">User ID</dt>
+            <dd className="text-sm text-text-primary font-mono">{user?.id}</dd>
+          </div>
+        </dl>
+      </Card>
+
+      <Card header={<span className="flex items-center gap-2 font-medium"><Palette className="size-4" />Appearance</span>}>
+        <div className="space-y-4">
+          <div>
+            <label className="section-label">Theme</label>
+            <div className="grid grid-cols-3 gap-2">
+              {(['light', 'dark', 'system'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTheme(t)}
+                  className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-medium transition-all ${
+                    theme === t
+                      ? 'border-primary-500 bg-primary-50 text-primary-700'
+                      : 'border-border text-text-secondary hover:bg-surface-secondary'
+                  }`}
+                >
+                  {t === 'light' && <Sun className="size-4" />}
+                  {t === 'dark' && <Moon className="size-4" />}
+                  {t === 'system' && <Monitor className="size-4" />}
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
+      </Card>
+
+      <Card header={<span className="flex items-center gap-2 font-medium"><Bell className="size-4" />Notifications</span>}>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-text-primary">Email Notifications</p>
+              <p className="text-xs text-text-muted">Receive updates about bug assignments and status changes</p>
+            </div>
+            <button
+              onClick={() => setEmailNotifications(!emailNotifications)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                emailNotifications ? 'bg-primary-600' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  emailNotifications ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      <Card header={<span className="flex items-center gap-2 font-medium"><Globe className="size-4" />Language & Region</span>}>
+        <div className="space-y-4">
+          <div>
+            <label className="section-label">Language</label>
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              className="input-field"
+            >
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="fr">Français</option>
+              <option value="de">Deutsch</option>
+            </select>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }

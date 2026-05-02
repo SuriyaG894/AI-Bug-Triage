@@ -7,7 +7,7 @@ from typing import Optional, List
 from datetime import datetime
 import json
 
-from app.core.database import get_db, User
+from app.core.database import get_db, User, Project, UserProjectAssignment
 from app.core.config import settings
 from app.models import Bug, AnalysisResult, BugEmbedding
 from app.schemas import (
@@ -94,12 +94,12 @@ async def suggest_bug_fields(
 
 @router.post("", response_model=BugResponse)
 async def create_bug(
-    bug: BugCreate, 
+    bug: BugCreate,
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_from_token)
 ):
     classification = {"severity": "medium", "type": "general", "confidence": 0.5}
-    
+
     try:
         combined_text = f"{bug.title}. {bug.description}"
         if bug.repro_steps:
@@ -107,14 +107,25 @@ async def create_bug(
         classification = await classify_bug(combined_text)
     except Exception:
         pass
-    
+
     priority = bug.priority or classification.get("severity", "medium")
     severity = bug.severity or classification.get("severity", "medium")
-    
+
     # Auto-set created_by and reporter_id from authenticated user
     bug_created_by = current_user.email if current_user else None
     bug_reporter_id = current_user.id if current_user else None
-    
+
+    # Validate project access for non-admin users
+    if bug.project_id and current_user and not current_user.is_admin:
+        assignment = await db.execute(
+            select(UserProjectAssignment).where(
+                UserProjectAssignment.user_id == current_user.id,
+                UserProjectAssignment.project_id == bug.project_id
+            )
+        )
+        if not assignment.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="You are not assigned to this project")
+
     new_bug = Bug(
         title=bug.title,
         description=bug.description,
@@ -130,6 +141,7 @@ async def create_bug(
         reporter_id=bug_reporter_id,
         duplicate_justification=bug.duplicate_justification,
         duplicate_of_external_ids=bug.duplicate_of_external_ids,
+        project_id=bug.project_id,
     )
     db.add(new_bug)
     await db.commit()
@@ -168,7 +180,9 @@ async def list_bugs(
     type: Optional[str] = None,
     status: Optional[str] = None,
     search: Optional[str] = None,
+    project_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_from_token),
 ):
     query = select(Bug)
 
@@ -185,6 +199,23 @@ async def list_bugs(
                 Bug.description.ilike(f"%{search}%"),
             )
         )
+
+    # Restrict non-admin users to their assigned projects
+    if current_user and not current_user.is_admin:
+        assigned_project_ids = (await db.execute(
+            select(UserProjectAssignment.project_id).where(
+                UserProjectAssignment.user_id == current_user.id
+            )
+        )).scalars().all()
+        if assigned_project_ids:
+            query = query.where(Bug.project_id.in_(assigned_project_ids))
+        else:
+            # No assigned projects, return empty list
+            return BugListResponse(total=0, bugs=[])
+
+    # Apply project filter if specified
+    if project_id:
+        query = query.where(Bug.project_id == project_id)
 
     count_query = select(func.count()).select_from(query.subquery())
     total = await db.scalar(count_query)
@@ -569,22 +600,32 @@ async def push_bug_to_external(
     from app.schemas import PushBugResponse
     from app.services.integrations.azure_devops import create_azure_client
     from app.services.integrations.jira import create_jira_client
-    
+
     result = await db.execute(select(Bug).where(Bug.id == bug_id))
     bug = result.scalar_one_or_none()
-    
+
     if not bug:
         raise HTTPException(status_code=404, detail="Bug not found")
-    
+
     if tool_type == "azure_devops":
-        client = create_azure_client(settings.AZURE_DEVOPS_PAT or "")
+        # Get project name from bug's project_id
+        ado_project_name = project_key
+        if bug.project_id and not ado_project_name:
+            project_result = await db.execute(
+                select(Project).where(Project.id == bug.project_id)
+            )
+            project = project_result.scalar_one_or_none()
+            if project:
+                ado_project_name = project.ado_project_name or project.name
+
+        client = create_azure_client(settings.AZURE_DEVOPS_PAT or "", project=ado_project_name)
         if not client:
             return PushBugResponse(
                 success=False,
                 message="Azure DevOps not configured",
             )
-        
-        result = await client.create_work_item(
+
+        push_result = await client.create_work_item(
             title=bug.title,
             description=bug.description,
             severity=bug.severity,
@@ -597,8 +638,9 @@ async def push_bug_to_external(
             assigned_to=bug.assigned_to,
             duplicate_of_external_ids=bug.duplicate_of_external_ids,
             duplicate_justification=bug.duplicate_justification,
+            project=ado_project_name,
         )
-        return PushBugResponse(**result)
+        return PushBugResponse(**push_result)
     
     elif tool_type == "jira":
         client = create_jira_client(

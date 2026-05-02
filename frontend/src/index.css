@@ -2,42 +2,562 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-gray-50 text-gray-900;
+:root {
+  --sidebar-width: 240px;
+  --sidebar-collapsed: 64px;
+  --header-height: 64px;
 }
 
+* {
+  box-sizing: border-box;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900 font-sans antialiased;
+  min-height: 100vh;
+}
+
+/* Buttons */
 .btn-primary {
-  @apply bg-primary-600 hover:bg-primary-700 text-white font-medium py-2 px-4 rounded-lg transition-colors;
+  @apply inline-flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white font-medium py-2 px-4 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm;
 }
 
 .btn-secondary {
-  @apply bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg transition-colors;
+  @apply inline-flex items-center justify-center gap-2 bg-white hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-lg border border-gray-300 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm;
 }
 
+.btn-danger {
+  @apply inline-flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm;
+}
+
+.btn-ghost {
+  @apply inline-flex items-center justify-center gap-2 hover:bg-gray-100 text-gray-600 font-medium py-2 px-4 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm;
+}
+
+.btn-icon {
+  @apply inline-flex items-center justify-center p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors;
+}
+
+/* Inputs */
 .input-field {
-  @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+  @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 text-sm;
 }
 
+.input-field:disabled {
+  @apply bg-gray-50 text-gray-500 cursor-not-allowed;
+}
+
+.input-field-with-icon {
+  @apply w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 text-sm;
+}
+
+/* Cards */
 .card {
-  @apply bg-white rounded-lg shadow-md p-6;
+  @apply bg-white rounded-xl border border-gray-200 shadow-card;
 }
 
-.severity-badge {
-  @apply px-2 py-1 rounded-full text-xs font-medium;
+.card-header {
+  @apply px-6 py-4 border-b border-gray-200;
 }
 
-.severity-critical {
+.card-body {
+  @apply px-6 py-4;
+}
+
+.card-footer {
+  @apply px-6 py-4 border-t border-gray-200 bg-gray-50;
+}
+
+/* Typography */
+.page-title {
+  @apply text-2xl font-bold text-gray-900;
+}
+
+.section-label {
+  @apply block text-sm font-medium text-gray-600 mb-1;
+}
+
+/* Badges */
+.badge {
+  @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.badge-success {
+  @apply bg-green-100 text-green-800;
+}
+
+.badge-error {
   @apply bg-red-100 text-red-800;
 }
 
-.severity-high {
-  @apply bg-orange-100 text-orange-800;
-}
-
-.severity-medium {
+.badge-warning {
   @apply bg-yellow-100 text-yellow-800;
 }
 
-.severity-low {
+.badge-info {
+  @apply bg-blue-100 text-blue-800;
+}
+
+.badge-severity-critical {
+  @apply bg-red-100 text-red-800;
+}
+
+.badge-severity-high {
+  @apply bg-orange-100 text-orange-800;
+}
+
+.badge-severity-medium {
+  @apply bg-yellow-100 text-yellow-800;
+}
+
+.badge-severity-low {
   @apply bg-green-100 text-green-800;
+}
+
+.badge-status-open {
+  @apply bg-blue-100 text-blue-800;
+}
+
+.badge-status-in_progress {
+  @apply bg-purple-100 text-purple-800;
+}
+
+.badge-status-resolved {
+  @apply bg-emerald-100 text-emerald-800;
+}
+
+.badge-status-closed {
+  @apply bg-gray-100 text-gray-800;
+}
+
+.badge-source-internal {
+  @apply bg-indigo-100 text-indigo-800;
+}
+
+.badge-source-external {
+  @apply bg-teal-100 text-teal-800;
+}
+
+/* Tables */
+.table-container {
+  @apply w-full overflow-hidden rounded-xl border border-gray-200;
+}
+
+.table-header {
+  @apply bg-gray-50 px-6 py-4 border-b border-gray-200;
+}
+
+.table {
+  @apply min-w-full divide-y divide-gray-200;
+}
+
+.table th {
+  @apply px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50;
+}
+
+.table td {
+  @apply px-6 py-4 whitespace-nowrap text-sm text-gray-900;
+}
+
+.table tbody tr {
+  @apply hover:bg-gray-50 transition-colors;
+}
+
+.table tbody tr:not(:last-child) {
+  @apply border-b border-gray-100;
+}
+
+/* Skeletons */
+.skeleton {
+  @apply animate-pulse bg-gray-200 rounded;
+}
+
+.skeleton-text {
+  @apply h-4 bg-gray-200 rounded w-3/4;
+}
+
+.skeleton-title {
+  @apply h-6 bg-gray-200 rounded w-1/2;
+}
+
+.skeleton-avatar {
+  @apply h-10 w-10 bg-gray-200 rounded-full;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded-full hover:bg-gray-400;
+}
+
+/* Transitions */
+.page-transition {
+  @apply animate-fade-in;
+}
+
+/* Responsive utilities */
+@media (max-width: 768px) {
+  .card {
+    @apply rounded-lg;
+  }
+  
+  .table-container {
+    @apply rounded-lg;
+  }
+}
+
+/* ==========================================================================
+   DARK MODE - Global overrides for raw Tailwind utility classes
+   ========================================================================== */
+
+/* Page backgrounds and base text */
+html.dark body {
+  background-color: #030712 !important;
+  color: #f9fafb !important;
+}
+
+/* Override common bg utilities */
+html.dark .bg-white,
+html.dark .bg-gray-50,
+html.dark .bg-gray-100,
+html.dark .bg-gray-200,
+html.dark .bg-surface-primary,
+html.dark .bg-surface-secondary {
+  background-color: #111827 !important;
+}
+
+html.dark .bg-gray-700,
+html.dark .bg-surface-tertiary {
+  background-color: #1f2937 !important;
+}
+
+/* Override common text utilities */
+html.dark .text-gray-900,
+html.dark .text-gray-800,
+html.dark .text-gray-700 {
+  color: #f3f4f6 !important;
+}
+
+html.dark .text-gray-600,
+html.dark .text-gray-500 {
+  color: #9ca3af !important;
+}
+
+html.dark .text-gray-400 {
+  color: #6b7280 !important;
+}
+
+/* Override borders */
+html.dark .border-gray-100,
+html.dark .border-gray-200,
+html.dark .border-gray-300,
+html.dark .border-border,
+html.dark .divide-gray-100,
+html.dark .divide-gray-200 {
+  border-color: #374151 !important;
+}
+
+/* Header */
+html.dark header {
+  background-color: #111827 !important;
+  border-bottom-color: #1f2937 !important;
+}
+
+/* Sidebar */
+html.dark .bg-sidebar {
+  background-color: #0f172a !important;
+}
+
+html.dark .sidebar-item {
+  color: #9ca3af !important;
+}
+
+html.dark .sidebar-item:hover,
+html.dark .sidebar-item-active {
+  background-color: #1e293b !important;
+  color: #f3f4f6 !important;
+}
+
+/* Dropdown menus */
+html.dark .shadow-card,
+html.dark .shadow-sidebar {
+  --tw-shadow-color: rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Table rows hover */
+html.dark table tbody tr:hover {
+  background-color: #1f2937 !important;
+}
+
+/* Stat cards on homepage */
+html.dark .stat-card {
+  background-color: #111827 !important;
+  border-color: #1f2937 !important;
+}
+
+/* Chart containers */
+html.dark .chart-container {
+  background-color: #111827 !important;
+}
+
+/* Form elements - focus ring offset */
+html.dark .focus\:ring-offset-2 {
+  --tw-ring-offset-color: #111827 !important;
+}
+
+/* Inputs - maximum specificity for dark mode form visibility */
+html.dark input.input-field,
+html.dark textarea.input-field,
+html.dark select.input-field,
+html.dark input[type="text"],
+html.dark input[type="password"],
+html.dark input[type="email"],
+html.dark textarea,
+html.dark select {
+  background-color: #1f2937 !important;
+  border-color: #374151 !important;
+  color: #f3f4f6 !important;
+}
+
+html.dark input.input-field:focus,
+html.dark textarea.input-field:focus,
+html.dark select.input-field:focus {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3) !important;
+}
+
+html.dark input.input-field:disabled,
+html.dark textarea.input-field:disabled,
+html.dark select.input-field:disabled {
+  background-color: #111827 !important;
+  color: #6b7280 !important;
+  border-color: #374151 !important;
+  cursor: not-allowed;
+}
+
+html.dark input.input-field-with-icon {
+  background-color: #1f2937 !important;
+  border-color: #374151 !important;
+  color: #f3f4f6 !important;
+}
+
+html.dark select.input-field option,
+html.dark select option {
+  background-color: #1f2937 !important;
+  color: #f3f4f6 !important;
+}
+
+/* Section labels in dark mode */
+html.dark .section-label {
+  color: #9ca3af !important;
+}
+
+/* Primary colored elements that should stay the same */
+html.dark .bg-primary-100 {
+  background-color: #1e3a5f !important;
+}
+
+html.dark .text-primary-800,
+html.dark .text-primary-700 {
+  color: #93c5fd !important;
+}
+
+html.dark .text-primary-600 {
+  color: #3b82f6 !important;
+}
+
+html.dark .border-primary-600,
+html.dark .border-primary-500 {
+  border-color: #2563eb !important;
+}
+
+html.dark .bg-primary-50 {
+  background-color: #1e3a5f !important;
+}
+
+/* Admin page tab borders */
+html.dark .border-b {
+  border-bottom-color: #374151 !important;
+}
+
+/* Profile page specific */
+html.dark dl dt {
+  color: #9ca3af !important;
+}
+
+html.dark dl dd {
+  color: #f3f4f6 !important;
+}
+
+html.dark .font-mono {
+  color: #9ca3af !important;
+}
+
+/* Toggle switch */
+html.dark .bg-red-50 {
+  background-color: #450a0a !important;
+}
+
+html.dark .text-red-800 {
+  color: #fca5a5 !important;
+}
+
+html.dark .text-red-600 {
+  color: #f87171 !important;
+}
+
+html.dark .hover\:bg-red-50:hover {
+  background-color: #450a0a !important;
+}
+
+/* Green backgrounds */
+html.dark .bg-green-100,
+html.dark .bg-green-50 {
+  background-color: #052e16 !important;
+}
+
+html.dark .text-green-800 {
+  color: #4ade80 !important;
+}
+
+html.dark .text-green-600 {
+  color: #4ade80 !important;
+}
+
+/* Purple backgrounds */
+html.dark .bg-purple-100 {
+  background-color: #3b0764 !important;
+}
+
+html.dark .text-purple-800,
+html.dark .text-purple-700 {
+  color: #c084fc !important;
+}
+
+/* Yellow backgrounds */
+html.dark .bg-yellow-100 {
+  background-color: #422006 !important;
+}
+
+html.dark .text-yellow-800,
+html.dark .text-yellow-600 {
+  color: #facc15 !important;
+}
+
+/* Blue backgrounds */
+html.dark .bg-blue-100 {
+  background-color: #1e3a8a22 !important;
+}
+
+html.dark .text-blue-800 {
+  color: #60a5fa !important;
+}
+
+/* Orange backgrounds */
+html.dark .bg-orange-100 {
+  background-color: #431407 !important;
+}
+
+html.dark .text-orange-800 {
+  color: #fb923c !important;
+}
+
+/* Red/gray status backgrounds */
+html.dark .bg-red-100 {
+  background-color: #450a0a !important;
+}
+
+/* Toggle switch */
+html.dark .bg-gray-300 {
+  background-color: #374151 !important;
+}
+
+/* Success/10 opacity backgrounds (Admin page toggle) */
+html.dark .bg-success\/10 {
+  background-color: #052e16 !important;
+}
+
+/* Hover text gray-900 */
+html.dark .hover\:text-gray-900:hover {
+  color: #f3f4f6 !important;
+}
+
+/* Links */
+html.dark .hover\:bg-gray-100:hover {
+  background-color: #1f2937 !important;
+}
+
+html.dark .hover\:bg-gray-50:hover {
+  background-color: #1f2937 !important;
+}
+
+html.dark .hover\:text-gray-700:hover {
+  color: #d1d5db !important;
+}
+
+html.dark .hover\:text-gray-800:hover {
+  color: #d1d5db !important;
+}
+
+html.dark .hover\:text-gray-600:hover {
+  color: #9ca3af !important;
+}
+
+html.dark .hover\:text-blue-800:hover {
+  color: #60a5fa !important;
+}
+
+html.dark .hover\:text-red-800:hover {
+  color: #f87171 !important;
+}
+
+html.dark .hover\:text-primary-800:hover {
+  color: #93c5fd !important;
+}
+
+html.dark .text-text-secondary,
+html.dark .text-text-primary,
+html.dark .text-text-muted {
+  color: #d1d5db !important;
+}
+
+/* Notification badge */
+html.dark .bg-red-500 {
+  background-color: #ef4444 !important;
+}
+
+/* Spinner */
+html.dark .border-b-2 {
+  border-bottom-color: #3b82f6 !important;
+}
+
+/* Placeholder text */
+html.dark ::placeholder {
+  color: #6b7280 !important;
+}
+
+/* Selection */
+html.dark ::selection {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+}
+
+/* Input backgrounds that use bg-gray-50 for disabled */
+html.dark .bg-gray-50.text-gray-500,
+html.dark input:disabled {
+  background-color: #1f2937 !important;
+  color: #6b7280 !important;
+}
+
+/* Animation backdrop */
+html.dark .animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
 }

@@ -5,8 +5,9 @@ from sqlalchemy import select, func
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import httpx
 
-from app.core.database import get_db, User, Bug, Integration
+from app.core.database import get_db, User, Bug, Integration, Project, UserProjectAssignment
 from app.api.routes.auth import require_admin, decode_token, get_current_user_optional
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -48,6 +49,11 @@ class SyncConfigUpdate(BaseModel):
     auto_sync_enabled: bool
 
 
+class TestCredentialsRequest(BaseModel):
+    tool_type: str
+    credentials: str
+
+
 class AdminSyncStatus(BaseModel):
     is_running: bool
     interval_minutes: int
@@ -63,6 +69,52 @@ class AuditLogResponse(BaseModel):
     user_email: Optional[str]
     details: Optional[str]
     created_at: datetime
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    ado_project_id: Optional[str] = None
+    ado_project_name: Optional[str] = None
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ProjectResponse(BaseModel):
+    id: int
+    name: str
+    ado_project_id: Optional[str]
+    ado_project_name: Optional[str]
+    description: Optional[str]
+    is_active: bool
+    created_at: Optional[datetime] = None
+
+
+class UserProjectAssignRequest(BaseModel):
+    user_ids: List[int]
+
+
+class UserProjectAssignmentResponse(BaseModel):
+    id: int
+    user_id: int
+    user_email: str
+    user_full_name: Optional[str]
+    project_id: int
+
+
+class ProjectWithAssignments(BaseModel):
+    id: int
+    name: str
+    ado_project_id: Optional[str]
+    ado_project_name: Optional[str]
+    description: Optional[str]
+    is_active: bool
+    created_at: Optional[datetime] = None
+    assigned_users: List[Dict[str, Any]] = []
 
 
 # ============================================================================
@@ -320,3 +372,399 @@ async def test_integration(
         return {"status": "connected" if connected else "failed", "tool_type": integration.tool_type}
     
     return {"status": "unknown", "message": f"Unknown tool type: {integration.tool_type}"}
+
+
+@router.post("/integrations/test-credentials")
+async def test_integration_credentials(
+    data: TestCredentialsRequest,
+    admin: User = Depends(require_admin)
+):
+    """Test integration credentials without saving (admin only)."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[test-credentials] Called by admin user: {admin.email}, tool_type: {data.tool_type}")
+    
+    if data.tool_type == "azure_devops":
+        from app.services.integrations.azure_devops import AzureDevOpsClient
+        from app.core.config import settings
+        
+        org = getattr(settings, 'AZURE_DEVOPS_ORG', None)
+        project = getattr(settings, 'AZURE_DEVOPS_PROJECT', None)
+        
+        if not org or not project:
+            raise HTTPException(
+                status_code=400,
+                detail="AZURE_DEVOPS_ORG and AZURE_DEVOPS_PROJECT must be configured in backend"
+            )
+        
+        client = AzureDevOpsClient(org=org, project=project, pat=data.credentials)
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                headers = client._get_headers()
+                response = await http_client.get(
+                    f"https://dev.azure.com/{org}/_apis/projects",
+                    headers=headers,
+                    params={"api-version": "7.1"}
+                )
+                
+                if response.status_code == 200:
+                    projects_data = response.json()
+                    project_count = len(projects_data.get("value", []))
+                    return {
+                        "status": "connected",
+                        "message": f"Connected successfully. Found {project_count} project(s)."
+                    }
+                elif response.status_code == 401:
+                    raise HTTPException(status_code=400, detail="Invalid credentials - authentication failed")
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Connection failed (HTTP {response.status_code}): {response.text}"
+                    )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=400, detail=f"Network error: {str(e)}")
+    
+    elif data.tool_type == "jira":
+        from app.services.integrations.jira import JiraClient
+        from app.core.config import settings
+        
+        base_url = getattr(settings, 'JIRA_BASE_URL', None)
+        if not base_url:
+            raise HTTPException(
+                status_code=400,
+                detail="JIRA_BASE_URL must be configured in backend"
+            )
+        
+        client = JiraClient(base_url=base_url, email=getattr(settings, 'JIRA_EMAIL', ''), api_token=data.credentials)
+        
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                import base64
+                auth = base64.b64encode(f"{client.email}:{client.api_token}".encode()).decode()
+                headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+                response = await http_client.get(
+                    f"{client.base_url}/rest/api/3/myself",
+                    headers=headers
+                )
+                
+                if response.status_code == 200:
+                    user_data = response.json()
+                    return {
+                        "status": "connected",
+                        "message": f"Connected as {user_data.get('displayName', 'unknown')}"
+                    }
+                elif response.status_code == 401:
+                    raise HTTPException(status_code=400, detail="Invalid credentials - authentication failed")
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Connection failed (HTTP {response.status_code}): {response.text}"
+                    )
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=400, detail=f"Network error: {str(e)}")
+    
+    raise HTTPException(status_code=400, detail=f"Unsupported tool type: {data.tool_type}")
+
+
+# ============================================================================
+# Project Management
+# ============================================================================
+
+@router.get("/projects", response_model=List[ProjectWithAssignments])
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """List all projects with assigned users (admin only)."""
+    result = await db.execute(select(Project).order_by(Project.name))
+    projects = result.scalars().all()
+
+    response = []
+    for p in projects:
+        assignments = await db.execute(
+            select(UserProjectAssignment, User.email, User.full_name)
+            .join(User, User.id == UserProjectAssignment.user_id)
+            .where(UserProjectAssignment.project_id == p.id)
+        )
+        assigned_users = [
+            {"user_id": a[0].user_id, "email": a[1], "full_name": a[2]}
+            for a in assignments.all()
+        ]
+        response.append(ProjectWithAssignments(
+            id=p.id,
+            name=p.name,
+            ado_project_id=p.ado_project_id,
+            ado_project_name=p.ado_project_name,
+            description=p.description,
+            is_active=p.is_active,
+            created_at=p.created_at,
+            assigned_users=assigned_users
+        ))
+    return response
+
+
+@router.get("/projects/{project_id}", response_model=ProjectWithAssignments)
+async def get_project(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Get project details with assignments (admin only)."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    assignments = await db.execute(
+        select(UserProjectAssignment, User.email, User.full_name)
+        .join(User, User.id == UserProjectAssignment.user_id)
+        .where(UserProjectAssignment.project_id == project_id)
+    )
+    assigned_users = [
+        {"user_id": a[0].user_id, "email": a[1], "full_name": a[2]}
+        for a in assignments.all()
+    ]
+    return ProjectWithAssignments(
+        id=project.id,
+        name=project.name,
+        ado_project_id=project.ado_project_id,
+        ado_project_name=project.ado_project_name,
+        description=project.description,
+        is_active=project.is_active,
+        created_at=project.created_at,
+        assigned_users=assigned_users
+    )
+
+
+@router.post("/projects", response_model=ProjectResponse)
+async def create_project(
+    data: ProjectCreate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Create a new project (admin only)."""
+    project = Project(
+        name=data.name,
+        description=data.description,
+        ado_project_id=data.ado_project_id,
+        ado_project_name=data.ado_project_name,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+
+    return ProjectResponse(
+        id=project.id,
+        name=project.name,
+        ado_project_id=project.ado_project_id,
+        ado_project_name=project.ado_project_name,
+        description=project.description,
+        is_active=project.is_active,
+        created_at=project.created_at
+    )
+
+
+@router.put("/projects/{project_id}", response_model=ProjectResponse)
+async def update_project(
+    project_id: int,
+    data: ProjectUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Update a project (admin only)."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if data.name is not None:
+        project.name = data.name
+    if data.description is not None:
+        project.description = data.description
+    if data.is_active is not None:
+        project.is_active = data.is_active
+
+    await db.commit()
+    await db.refresh(project)
+
+    return ProjectResponse(
+        id=project.id,
+        name=project.name,
+        ado_project_id=project.ado_project_id,
+        ado_project_name=project.ado_project_name,
+        description=project.description,
+        is_active=project.is_active,
+        created_at=project.created_at
+    )
+
+
+@router.delete("/projects/{project_id}")
+async def delete_project(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Delete a project and its assignments (admin only)."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await db.execute(
+        select(UserProjectAssignment).where(
+            UserProjectAssignment.project_id == project_id
+        )
+    )
+    assignments = (await db.execute(
+        select(UserProjectAssignment).where(
+            UserProjectAssignment.project_id == project_id
+        )
+    )).scalars().all()
+    for a in assignments:
+        await db.delete(a)
+
+    await db.delete(project)
+    await db.commit()
+    return {"message": "Project deleted", "project_id": project_id}
+
+
+@router.post("/projects/{project_id}/assign-users")
+async def assign_users_to_project(
+    project_id: int,
+    data: UserProjectAssignRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Assign users to a project (admin only)."""
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    existing = (await db.execute(
+        select(UserProjectAssignment.user_id).where(
+            UserProjectAssignment.project_id == project_id
+        )
+    )).scalars().all()
+    existing_ids = set(existing)
+
+    new_ids = set(data.user_ids) - existing_ids
+    removed_ids = existing_ids - set(data.user_ids)
+
+    for uid in new_ids:
+        assignment = UserProjectAssignment(user_id=uid, project_id=project_id)
+        db.add(assignment)
+
+    for uid in removed_ids:
+        result = await db.execute(
+            select(UserProjectAssignment).where(
+                UserProjectAssignment.user_id == uid,
+                UserProjectAssignment.project_id == project_id
+            )
+        )
+        assignment = result.scalar_one_or_none()
+        if assignment:
+            await db.delete(assignment)
+
+    await db.commit()
+    return {"message": "Users assigned", "added": len(new_ids), "removed": len(removed_ids)}
+
+
+@router.post("/projects/sync-from-ado")
+async def sync_projects_from_ado(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Sync projects from Azure DevOps (admin only)."""
+    from app.services.integrations.azure_devops import AzureDevOpsClient
+    from app.core.config import settings
+
+    org = getattr(settings, 'AZURE_DEVOPS_ORG', None)
+    pat = getattr(settings, 'AZURE_DEVOPS_PAT', None)
+
+    if not org or not pat:
+        raise HTTPException(
+            status_code=400,
+            detail="AZURE_DEVOPS_ORG and AZURE_DEVOPS_PAT must be configured"
+        )
+
+    client = AzureDevOpsClient(org=org, pat=pat)
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as http_client:
+            headers = client._get_headers()
+            response = await http_client.get(
+                f"https://dev.azure.com/{org}/_apis/projects",
+                headers=headers,
+                params={"api-version": "7.1"}
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to fetch projects from ADO: {response.text}"
+                )
+
+            projects_data = response.json().get("value", [])
+            synced = 0
+
+            for p in projects_data:
+                ado_id = p.get("id")
+                ado_name = p.get("name")
+
+                existing = await db.execute(
+                    select(Project).where(Project.ado_project_id == ado_id)
+                )
+                existing_project = existing.scalar_one_or_none()
+
+                if existing_project:
+                    existing_project.ado_project_name = ado_name
+                    existing_project.name = ado_name
+                else:
+                    new_project = Project(
+                        name=ado_name,
+                        ado_project_id=ado_id,
+                        ado_project_name=ado_name,
+                    )
+                    db.add(new_project)
+                synced += 1
+
+            await db.commit()
+            return {"message": f"Synced {synced} project(s) from ADO", "count": synced}
+
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=400, detail=f"Network error: {str(e)}")
+
+
+# ============================================================================
+# User Assigned Projects (for non-admin users)
+# ============================================================================
+
+@router.get("/my/projects")
+async def get_my_projects(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user_optional)
+):
+    """Get projects assigned to current user."""
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    if user.is_admin:
+        result = await db.execute(select(Project).where(Project.is_active == True).order_by(Project.name))
+        projects = result.scalars().all()
+        return [
+            {"id": p.id, "name": p.name, "ado_project_id": p.ado_project_id, "ado_project_name": p.ado_project_name}
+            for p in projects
+        ]
+
+    result = await db.execute(
+        select(Project).join(UserProjectAssignment, UserProjectAssignment.project_id == Project.id)
+        .where(UserProjectAssignment.user_id == user.id, Project.is_active == True)
+        .order_by(Project.name)
+    )
+    projects = result.scalars().all()
+    return [
+        {"id": p.id, "name": p.name, "ado_project_id": p.ado_project_id, "ado_project_name": p.ado_project_name}
+        for p in projects
+    ]
