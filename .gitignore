@@ -79,3 +79,6 @@ coverage/
 .cache/
 *.bak
 *.tmp
+
+# Sample UI
+enterprise-ui-sample/
