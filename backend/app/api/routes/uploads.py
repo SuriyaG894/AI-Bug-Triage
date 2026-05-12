@@ -1,6 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import os
 import uuid
+import base64
 
 router = APIRouter()
 
@@ -29,4 +30,8 @@ async def upload_file(file: UploadFile = File(...)):
     with open(file_path, "wb") as f:
         f.write(content)
     
-    return {"url": f"/api/uploads/{file_name}", "filename": file.filename}
+    return {
+        "url": f"/api/uploads/{file_name}",
+        "filename": file.filename,
+        "content_base64": base64.b64encode(content).decode(),
+    }

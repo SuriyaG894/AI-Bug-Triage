@@ -4,11 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import httpx
 
-from app.core.database import get_db, User, Bug, Integration, Project, UserProjectAssignment
+from app.core.database import get_db, User, Bug, Integration, Project, UserProjectAssignment, AuditLog
 from app.api.routes.auth import require_admin, decode_token, get_current_user_optional
+from app.services.audit_service import log_audit
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 security = HTTPBearer(auto_error=False)
@@ -52,6 +53,7 @@ class SyncConfigUpdate(BaseModel):
 class TestCredentialsRequest(BaseModel):
     tool_type: str
     credentials: str
+    org: Optional[str] = None
 
 
 class AdminSyncStatus(BaseModel):
@@ -61,14 +63,8 @@ class AdminSyncStatus(BaseModel):
     last_sync_at: Optional[str]
     last_sync_result: Optional[Dict[str, Any]]
     total_synced: int
+    next_sync_at: Optional[str]
 
-
-class AuditLogResponse(BaseModel):
-    id: int
-    action: str
-    user_email: Optional[str]
-    details: Optional[str]
-    created_at: datetime
 
 
 class ProjectCreate(BaseModel):
@@ -180,8 +176,14 @@ async def update_user_role(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
+    old_role = "admin" if user.is_admin else "user"
     user.is_admin = data.is_admin
     await db.commit()
+
+    await log_audit(db, admin.id, admin.email, "admin.update_user_role",
+                    entity_type="user", entity_id=user_id,
+                    details={"target_email": user.email, "old_role": old_role,
+                             "new_role": "admin" if data.is_admin else "user"})
     
     return {"message": "User role updated", "user_id": user_id, "is_admin": data.is_admin}
 
@@ -202,6 +204,11 @@ async def update_user_status(
     
     user.is_active = data.is_active
     await db.commit()
+
+    await log_audit(db, admin.id, admin.email, "admin.update_user_status",
+                    entity_type="user", entity_id=user_id,
+                    details={"target_email": user.email,
+                             "new_status": "active" if data.is_active else "inactive"})
     
     return {"message": "User status updated", "user_id": user_id, "is_active": data.is_active}
 
@@ -259,15 +266,36 @@ async def get_sync_status(
     
     is_running = _sync_service.is_running()
     interval_minutes = getattr(settings, 'SYNC_INTERVAL_MINUTES', 15)
-    auto_sync_enabled = interval_minutes > 0
+    auto_sync_enabled = is_running
+    
+    svc_status = _sync_service.get_status()
+    last_sync_at = svc_status.get("last_sync_at")
+    last_sync_result = svc_status.get("last_sync_result")
+    total_synced = svc_status.get("total_synced", 0)
+    
+    next_sync_at = None
+    if auto_sync_enabled and interval_minutes > 0:
+        now = datetime.now(timezone.utc)
+        if last_sync_at:
+            ls = datetime.fromisoformat(last_sync_at)
+            if ls.tzinfo is None:
+                ls = ls.replace(tzinfo=timezone.utc)
+            calculated_next = ls + timedelta(minutes=interval_minutes)
+            if calculated_next > now:
+                next_sync_at = calculated_next.isoformat()
+            else:
+                next_sync_at = (now + timedelta(minutes=interval_minutes)).isoformat()
+        else:
+            next_sync_at = (now + timedelta(minutes=interval_minutes)).isoformat()
     
     return AdminSyncStatus(
         is_running=is_running,
         interval_minutes=interval_minutes,
         auto_sync_enabled=auto_sync_enabled,
-        last_sync_at=None,
-        last_sync_result=None,
-        total_synced=0
+        last_sync_at=last_sync_at,
+        last_sync_result=last_sync_result,
+        total_synced=total_synced,
+        next_sync_at=next_sync_at,
     )
 
 
@@ -319,6 +347,16 @@ async def stop_sync(
     return await _sync_service.stop_scheduler()
 
 
+@router.post("/sync/clear")
+async def clear_sync_status(
+    admin: User = Depends(require_admin)
+):
+    """Clear sync status history (admin only)."""
+    from app.services.sync_service import _sync_service
+    _sync_service.clear_status()
+    return {"status": "cleared"}
+
+
 # ============================================================================
 # Integration Management (Existing routes with admin requirement)
 # ============================================================================
@@ -341,7 +379,9 @@ async def list_integrations(
             "is_active": i.is_active,
             "is_connected": bool(i.credentials),
             "last_sync_at": i.last_sync_at.isoformat() if i.last_sync_at else None,
-            "created_at": i.created_at.isoformat()
+            "created_at": i.created_at.isoformat(),
+            "org": (i.config or {}).get("org") if i.config else None,
+            "project": (i.config or {}).get("project") if i.config else None,
         }
         for i in integrations
     ]
@@ -361,10 +401,29 @@ async def test_integration(
         raise HTTPException(status_code=404, detail="Integration not found")
     
     if integration.tool_type == "azure_devops":
-        from app.services.integrations.azure_devops import AzureDevOpsService
-        service = AzureDevOpsService()
-        connected = await service.test_connection(integration.credentials, integration.config)
-        return {"status": "connected" if connected else "failed", "tool_type": integration.tool_type}
+        from app.services.integrations.azure_devops import AzureDevOpsClient
+
+        config = integration.config or {}
+        org = config.get("org")
+        if not org:
+            return {"status": "failed", "message": "Organisation not configured", "tool_type": integration.tool_type}
+
+        pat = integration.credentials
+        client = AzureDevOpsClient(org=org, pat=pat)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                headers = client._get_headers()
+                response = await http_client.get(
+                    f"https://dev.azure.com/{org}/_apis/projects",
+                    headers=headers,
+                    params={"api-version": "7.1"}
+                )
+                if response.status_code == 200:
+                    return {"status": "connected", "tool_type": integration.tool_type}
+                return {"status": "failed", "message": f"HTTP {response.status_code}", "tool_type": integration.tool_type}
+        except Exception as e:
+            return {"status": "failed", "message": str(e), "tool_type": integration.tool_type}
     elif integration.tool_type == "jira":
         from app.services.integrations.jira import JiraService
         service = JiraService()
@@ -386,19 +445,16 @@ async def test_integration_credentials(
     
     if data.tool_type == "azure_devops":
         from app.services.integrations.azure_devops import AzureDevOpsClient
-        from app.core.config import settings
-        
-        org = getattr(settings, 'AZURE_DEVOPS_ORG', None)
-        project = getattr(settings, 'AZURE_DEVOPS_PROJECT', None)
-        
-        if not org or not project:
+
+        org = data.org
+        if not org:
             raise HTTPException(
                 status_code=400,
-                detail="AZURE_DEVOPS_ORG and AZURE_DEVOPS_PROJECT must be configured in backend"
+                detail="Organisation is required for Azure DevOps"
             )
-        
-        client = AzureDevOpsClient(org=org, project=project, pat=data.credentials)
-        
+
+        client = AzureDevOpsClient(org=org, pat=data.credentials)
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as http_client:
                 headers = client._get_headers()
@@ -407,7 +463,7 @@ async def test_integration_credentials(
                     headers=headers,
                     params={"api-version": "7.1"}
                 )
-                
+
                 if response.status_code == 200:
                     projects_data = response.json()
                     project_count = len(projects_data.get("value", []))
@@ -554,6 +610,10 @@ async def create_project(
     await db.commit()
     await db.refresh(project)
 
+    await log_audit(db, admin.id, admin.email, "admin.create_project",
+                    entity_type="project", entity_id=project.id,
+                    details={"name": project.name})
+
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -588,6 +648,10 @@ async def update_project(
     await db.commit()
     await db.refresh(project)
 
+    await log_audit(db, admin.id, admin.email, "admin.update_project",
+                    entity_type="project", entity_id=project.id,
+                    details={"name": project.name})
+
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -611,6 +675,8 @@ async def delete_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    project_name = project.name
+
     await db.execute(
         select(UserProjectAssignment).where(
             UserProjectAssignment.project_id == project_id
@@ -626,6 +692,11 @@ async def delete_project(
 
     await db.delete(project)
     await db.commit()
+
+    await log_audit(db, admin.id, admin.email, "admin.delete_project",
+                    entity_type="project", entity_id=project_id,
+                    details={"name": project_name})
+
     return {"message": "Project deleted", "project_id": project_id}
 
 
@@ -678,15 +749,29 @@ async def sync_projects_from_ado(
 ):
     """Sync projects from Azure DevOps (admin only)."""
     from app.services.integrations.azure_devops import AzureDevOpsClient
-    from app.core.config import settings
+    from app.core.config import decrypt_api_key
 
-    org = getattr(settings, 'AZURE_DEVOPS_ORG', None)
-    pat = getattr(settings, 'AZURE_DEVOPS_PAT', None)
+    result = await db.execute(
+        select(Integration).where(Integration.tool_type == "azure_devops", Integration.is_active == True)
+    )
+    integration = result.scalar_one_or_none()
 
-    if not org or not pat:
+    if not integration or not integration.credentials:
         raise HTTPException(
             status_code=400,
-            detail="AZURE_DEVOPS_ORG and AZURE_DEVOPS_PAT must be configured"
+            detail="Azure DevOps integration not configured. Set it up in the Integrations tab first."
+        )
+
+    config = integration.config or {}
+    org = config.get("org")
+    pat = integration.credentials
+    if pat.startswith("ENC:"):
+        pat = decrypt_api_key(pat, settings.ENCRYPTION_KEY)
+
+    if not org:
+        raise HTTPException(
+            status_code=400,
+            detail="Azure DevOps integration is missing organisation. Edit the integration to add it."
         )
 
     client = AzureDevOpsClient(org=org, pat=pat)

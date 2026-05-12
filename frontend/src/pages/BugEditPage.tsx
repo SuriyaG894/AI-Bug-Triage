@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi, projectApi, Project } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -7,7 +7,7 @@ import { Badge, Card, Modal } from '../components';
 import { ArrowLeft, Loader2, Brain, AlertTriangle, Paperclip, X, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-interface BugFormInputs {
+interface BugEditInputs {
   title: string;
   description: string;
   repro_steps: string;
@@ -15,8 +15,8 @@ interface BugFormInputs {
   actual_result: string;
   priority: string;
   severity: string;
-  created_by: string;
-  pushToAzure: boolean;
+  type: string;
+  status: string;
   assigned_to: string;
 }
 
@@ -26,11 +26,13 @@ interface Attachment {
   content_base64?: string;
 }
 
-export default function BugFormPage() {
+export default function BugEditPage() {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const [gettingSuggestion, setGettingSuggestion] = useState(false);
   const [duplicateResult, setDuplicateResult] = useState<DuplicateCheckResponse | null>(null);
@@ -41,41 +43,70 @@ export default function BugFormPage() {
   const [showJustificationModal, setShowJustificationModal] = useState(false);
   const [justification, setJustification] = useState('');
   const [pendingDuplicateBug, setPendingDuplicateBug] = useState<DuplicateCheckResponse | null>(null);
-  const [formData, setFormData] = useState<BugFormInputs | null>(null);
+  const [formData, setFormData] = useState<BugEditInputs | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [projectError, setProjectError] = useState('');
+  const [bugData, setBugData] = useState<any>(null);
+  const [showPushOption, setShowPushOption] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const [bugId, setBugId] = useState<number | null>(null);
 
   useEffect(() => {
-    projectApi.myProjects().then(res => {
-      setProjects(res.data);
-      if (res.data.length === 1) {
-        setSelectedProjectId(res.data[0].id);
-      }
-    }).catch(() => {});
-  }, []);
+    if (id) {
+      const parsedId = parseInt(id);
+      setBugId(parsedId);
+      Promise.all([
+        bugApi.get(parsedId),
+        projectApi.myProjects(),
+      ]).then(([bugResp, projResp]) => {
+        const bug = bugResp.data;
+        setBugData(bug);
+        setProjects(projResp.data);
+        setSelectedProjectId(bug.project_id);
+        setAttachments(
+          (bug.attachments || []).map((a: any) =>
+            typeof a === 'string' ? { url: a, name: a.split('/').pop() || 'file' } : a
+          )
+        );
+        reset({
+          title: bug.title,
+          description: bug.description,
+          repro_steps: bug.repro_steps || '',
+          expected_result: bug.expected_result || '',
+          actual_result: bug.actual_result || '',
+          priority: bug.priority || 'medium',
+          severity: bug.severity,
+          type: bug.type,
+          status: bug.status,
+          assigned_to: bug.assigned_to || '',
+        });
+        setPageLoading(false);
+      }).catch(() => {
+        toast.error('Failed to load bug');
+        navigate('/bugs');
+      });
+    }
+  }, [id]);
 
   const {
     register,
     handleSubmit,
     watch,
     setValue,
+    reset,
     formState: { errors },
-  } = useForm<BugFormInputs>({
+  } = useForm<BugEditInputs>({
     defaultValues: {
       priority: 'medium',
       severity: 'medium',
-      pushToAzure: false,
+      type: 'general',
+      status: 'open',
       assigned_to: '',
       expected_result: '',
       actual_result: '',
     }
   });
-
-  useEffect(() => {
-    if (user?.email) {
-      setValue('created_by', user.email);
-    }
-  }, [user, setValue]);
 
   const title = watch('title', '');
   const description = watch('description', '');
@@ -85,7 +116,7 @@ export default function BugFormPage() {
     if (!title || title.length < 5 || !description || description.length < 20 || !reproSteps || reproSteps.length < 20) {
       return;
     }
-    
+
     setGettingSuggestion(true);
     try {
       const response = await bugApi.suggest(title, description, reproSteps);
@@ -100,10 +131,10 @@ export default function BugFormPage() {
 
   const checkDuplicate = async () => {
     if (!description || description.length < 10) return;
-    
+
     setCheckingDuplicate(true);
     try {
-      const response = await bugApi.checkDuplicate(title, description);
+      const response = await bugApi.checkDuplicateWithExclude(title, description, bugId!);
       setDuplicateResult(response.data);
     } catch (error) {
       console.error('Error checking duplicates:', error);
@@ -120,58 +151,49 @@ export default function BugFormPage() {
     }
   };
 
-  const submitBug = async (data: BugFormInputs, justText: string | null, extIds: string[] | null) => {
+  const submitBugUpdate = async (data: BugEditInputs, justText: string | null) => {
+    if (!bugId) return;
     setLoading(true);
 
     try {
-      const response = await bugApi.create({
+      const response = await bugApi.update(bugId, {
         title: data.title,
         description: data.description,
         priority: data.priority,
         severity: data.severity,
+        type: data.type,
+        status: data.status,
         repro_steps: data.repro_steps,
         expected_result: data.expected_result || undefined,
         actual_result: data.actual_result || undefined,
         assigned_to: data.assigned_to || undefined,
         attachments: attachments.length > 0 ? attachments.map(a => ({ url: a.url, name: a.name, content_base64: a.content_base64 })) : undefined,
-        created_by: user?.email || data.created_by || undefined,
-        reporter_id: user?.id,
-        duplicate_justification: justText || undefined,
-        duplicate_of_external_ids: extIds || undefined,
         project_id: selectedProjectId,
+        duplicate_justification: justText || undefined,
       });
-      
-      if (data.pushToAzure) {
-        try {
-          const pushResp = await bugApi.pushToExternal(response.data.id, 'azure_devops');
-          if (pushResp.data.success) {
-            if (pushResp.data.attachment_errors?.length) {
-              toast.error(`Pushed to ADO, but ${pushResp.data.attachment_errors.length} attachment(s) failed: ${pushResp.data.attachment_errors.join('; ')}`);
-            } else {
-              toast.success(`Bug created and pushed to Azure DevOps! Work Item: ${pushResp.data.external_id}`);
-            }
-          } else {
-            toast.error(`Bug created but push failed: ${pushResp.data.message}`);
-          }
-        } catch (pushErr: any) {
-          toast.error(`Bug created but push failed: ${pushErr.response?.data?.detail || 'Push failed'}`);
-        }
+
+      toast.success(`Bug "${response.data.title}" updated successfully!`);
+
+      if (bugData?.external_id || bugData?.push_to_external) {
+        setShowPushOption(true);
+        setBugData(response.data);
       } else {
-        toast.success(`Bug "${response.data.title}" created successfully!`);
+        navigate(`/bugs/${bugId}`);
       }
-      navigate('/bugs');
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Failed to create bug');
+      toast.error(error.response?.data?.detail || 'Failed to update bug');
     } finally {
       setLoading(false);
     }
   };
 
-  const onSubmit = async (data: BugFormInputs) => {
-    if (data.pushToAzure && !user?.is_admin && !selectedProjectId) {
-      toast.error('Project selection is required before pushing to Azure DevOps');
+  const onSubmit = async (data: BugEditInputs) => {
+    if (!user?.is_admin && !selectedProjectId) {
+      setProjectError('Please select a project before saving');
+      toast.error('Project selection is required');
       return;
     }
+    setProjectError('');
 
     if (duplicateResult && duplicateResult.similar_bugs.some(bug => bug.source === 'azure_devops')) {
       setPendingDuplicateBug(duplicateResult);
@@ -179,26 +201,55 @@ export default function BugFormPage() {
       setFormData(data);
       return;
     }
-    
-    await submitBug(data, null, null);
+
+    await submitBugUpdate(data, null);
   };
-  
+
   const handleJustificationSubmit = async () => {
     if (!pendingDuplicateBug || !justification.trim() || !formData) return;
 
-    if (formData.pushToAzure && !user?.is_admin && !selectedProjectId) {
-      toast.error('Project selection is required before pushing to Azure DevOps');
+    if (!user?.is_admin && !selectedProjectId) {
+      setProjectError('Please select a project before saving');
+      toast.error('Project selection is required');
+      setShowJustificationModal(false);
+      setPendingDuplicateBug(null);
       return;
     }
 
-    const adoDuplicates = pendingDuplicateBug.similar_bugs.filter(b => b.source === 'azure_devops');
-    const extIds = adoDuplicates.map(b => b.external_id).filter((id): id is string => !!id);
-    
     setShowJustificationModal(false);
     setJustification('');
     setPendingDuplicateBug(null);
-    
-    await submitBug(formData, justification, extIds);
+
+    await submitBugUpdate(formData, justification);
+  };
+
+  const handlePushUpdates = async () => {
+    if (!bugId) return;
+
+    if (!user?.is_admin && !selectedProjectId) {
+      setProjectError('A project must be selected to push to Azure DevOps');
+      toast.error('Select a project before pushing to Azure DevOps');
+      return;
+    }
+
+    setPushing(true);
+    try {
+      const resp = await bugApi.pushToExternal(bugId, 'azure_devops');
+      if (resp.data.success) {
+        if (resp.data.attachment_errors?.length) {
+          toast.error(`Pushed to ADO, but ${resp.data.attachment_errors.length} attachment(s) failed: ${resp.data.attachment_errors.join('; ')}`);
+        } else {
+          toast.success('Changes pushed to Azure DevOps!');
+        }
+      } else {
+        toast.error(resp.data.message);
+      }
+      navigate(`/bugs/${bugId}`);
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to push changes to Azure DevOps');
+    } finally {
+      setPushing(false);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -224,19 +275,31 @@ export default function BugFormPage() {
     setAttachments(attachments.filter((_, i) => i !== idx));
   };
 
+  if (pageLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <div className="h-8 w-8 bg-gray-200 rounded-full animate-pulse" />
+          <div className="h-8 bg-gray-200 rounded w-48 animate-pulse" />
+        </div>
+        <div className="h-64 bg-gray-200 rounded-xl animate-pulse" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4">
         <button
-          onClick={() => navigate('/bugs')}
+          onClick={() => navigate(`/bugs/${bugId}`)}
           className="btn-icon"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Report New Bug</h1>
-          <p className="text-sm text-gray-500">Fill in the details to create a new bug report</p>
+          <h1 className="text-2xl font-bold text-gray-900">Edit Bug #{bugId}</h1>
+          <p className="text-sm text-gray-500">Update the bug details below</p>
         </div>
       </div>
 
@@ -259,6 +322,26 @@ export default function BugFormPage() {
               )}
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Type
+              </label>
+              <select
+                {...register('type')}
+                className="input-field"
+              >
+                <option value="general">General</option>
+                <option value="ui">UI</option>
+                <option value="backend">Backend</option>
+                <option value="api">API</option>
+                <option value="data">Data</option>
+                <option value="security">Security</option>
+                <option value="performance">Performance</option>
+                <option value="crash">Crash</option>
+                <option value="data_loss">Data Loss</option>
+              </select>
+            </div>
+
             {projects.length > 0 && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -266,8 +349,11 @@ export default function BugFormPage() {
                 </label>
                 <select
                   value={selectedProjectId || ''}
-                  onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
-                  className="input-field"
+                  onChange={(e) => {
+                    setSelectedProjectId(e.target.value ? Number(e.target.value) : null);
+                    setProjectError('');
+                  }}
+                  className={`input-field ${projectError ? 'border-red-500' : ''}`}
                 >
                   {!user?.is_admin && <option value="">Select a project...</option>}
                   {user?.is_admin && <option value="">No project (optional)</option>}
@@ -275,6 +361,9 @@ export default function BugFormPage() {
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+                {projectError && (
+                  <p className="mt-1 text-sm text-red-600">{projectError}</p>
+                )}
               </div>
             )}
 
@@ -299,8 +388,8 @@ export default function BugFormPage() {
                 Steps to Reproduce <span className="text-red-500">*</span>
               </label>
               <textarea
-                {...register('repro_steps', { 
-                  required: 'Reproduction steps are required', 
+                {...register('repro_steps', {
+                  required: 'Reproduction steps are required',
                   minLength: { value: 20, message: 'Please provide detailed steps (at least 20 characters)' }
                 })}
                 className="input-field"
@@ -318,8 +407,8 @@ export default function BugFormPage() {
                   Expected Result <span className="text-red-500">*</span>
                 </label>
                 <textarea
-                  {...register('expected_result', { 
-                    required: 'Expected result is required', 
+                  {...register('expected_result', {
+                    required: 'Expected result is required',
                     minLength: { value: 10, message: 'At least 10 characters' }
                   })}
                   className="input-field"
@@ -336,8 +425,8 @@ export default function BugFormPage() {
                   Actual Result <span className="text-red-500">*</span>
                 </label>
                 <textarea
-                  {...register('actual_result', { 
-                    required: 'Actual result is required', 
+                  {...register('actual_result', {
+                    required: 'Actual result is required',
                     minLength: { value: 10, message: 'At least 10 characters' }
                   })}
                   className="input-field"
@@ -348,6 +437,21 @@ export default function BugFormPage() {
                   <p className="mt-1 text-sm text-red-600">{errors.actual_result.message}</p>
                 )}
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Status
+              </label>
+              <select
+                {...register('status')}
+                className="input-field"
+              >
+                <option value="open">Open</option>
+                <option value="in_progress">In Progress</option>
+                <option value="resolved">Resolved</option>
+                <option value="closed">Closed</option>
+              </select>
             </div>
 
             <button
@@ -396,21 +500,9 @@ export default function BugFormPage() {
           </div>
         </Card>
 
-        {/* User Info & Attachments */}
+        {/* Assignment & Attachments */}
         <Card>
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Reported By
-              </label>
-              <input
-                type="text"
-                {...register('created_by')}
-                className="input-field bg-gray-50"
-                readOnly
-              />
-            </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Assign To (Email)
@@ -539,35 +631,43 @@ export default function BugFormPage() {
           </Card>
         )}
 
-        {/* Submit */}
+        {/* Submit / Push */}
         <div className="flex justify-end gap-3 items-center">
-          <label className="flex items-center text-sm text-gray-600">
-            <input
-              type="checkbox"
-              {...register('pushToAzure')}
-              className="mr-2 rounded border-gray-300"
-            />
-            Push to Azure DevOps
-          </label>
           <button
             type="button"
-            onClick={() => navigate('/bugs')}
+            onClick={() => navigate(`/bugs/${bugId}`)}
             className="btn-secondary"
           >
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary disabled:opacity-50"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Submitting...
-              </span>
-            ) : 'Submit Bug'}
-          </button>
+          {showPushOption && bugData?.external_id ? (
+            <button
+              type="button"
+              onClick={handlePushUpdates}
+              disabled={pushing}
+              className="btn-primary disabled:opacity-50"
+            >
+              {pushing ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Pushing to Azure DevOps...
+                </span>
+              ) : 'Save & Push to Azure DevOps'}
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary disabled:opacity-50"
+            >
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </span>
+              ) : 'Save Changes'}
+            </button>
+          )}
         </div>
       </form>
 

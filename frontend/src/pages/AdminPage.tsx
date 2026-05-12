@@ -1,9 +1,36 @@
 import { useState, useEffect } from 'react';
-import { adminApi, AdminUser, AdminDashboardStats, AdminSyncStatus, integrationApi, projectApi, Project } from '../services/api';
+import { adminApi, AdminUser, AdminDashboardStats, AdminSyncStatus, auditApi, AuditLogEntry, integrationApi, projectApi, Project } from '../services/api';
 import Card from '../components/Card';
 import toast from 'react-hot-toast';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 
-type Tab = 'dashboard' | 'users' | 'integrations' | 'projects' | 'sync';
+type Tab = 'dashboard' | 'users' | 'integrations' | 'projects' | 'sync' | 'audit';
+
+const formatRelativeTime = (isoString: string | null): string => {
+  if (!isoString) return 'Never';
+  const now = new Date();
+  const then = new Date(isoString);
+  const diffMs = now.getTime() - then.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHrs = Math.floor(diffMins / 60);
+  if (diffHrs < 24) return `${diffHrs}h ${diffMins % 60}m ago`;
+  const diffDays = Math.floor(diffHrs / 24);
+  return `${diffDays}d ago`;
+};
+
+const formatCountdown = (isoString: string | null): string => {
+  if (!isoString) return 'N/A';
+  const now = new Date();
+  const then = new Date(isoString);
+  const diffMs = then.getTime() - now.getTime();
+  if (diffMs <= 0) return 'Due now';
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 60) return `in ${diffMins}m`;
+  const diffHrs = Math.floor(diffMins / 60);
+  return `in ${diffHrs}h ${diffMins % 60}m`;
+};
 
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
@@ -18,14 +45,60 @@ export default function AdminPage() {
     name: '',
     auth_type: 'token',
     credentials: '',
+    org: '',
+    project: '',
   });
   const [syncing, setSyncing] = useState(false);
   const [syncInterval, setSyncInterval] = useState(15);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
 
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize] = useState(20);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditExpandedId, setAuditExpandedId] = useState<number | null>(null);
+  const [auditFilterEmail, setAuditFilterEmail] = useState<string>('');
+  const [auditFilterAction, setAuditFilterAction] = useState<string>('');
+  const [auditFilterDays, setAuditFilterDays] = useState<number>(7);
+
+  const fetchAuditLogs = async (pageOverride?: number) => {
+    setAuditLoading(true);
+    try {
+      const params: any = {
+        days: auditFilterDays,
+        page: pageOverride ?? auditPage,
+        page_size: auditPageSize,
+      };
+      if (auditFilterEmail) params.user_email = auditFilterEmail;
+      if (auditFilterAction) params.action = auditFilterAction;
+      const resp = await auditApi.adminListLogs(params);
+      setAuditLogs(resp.data.logs);
+      setAuditTotal(resp.data.total);
+    } catch (e) {
+      console.error('Failed to fetch audit logs:', e);
+      setAuditLogs([]);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'audit') {
+      setAuditPage(1);
+      fetchAuditLogs(1);
+    }
+  }, [activeTab, auditFilterDays, auditFilterAction, auditFilterEmail]);
+
+  useEffect(() => {
+    if (activeTab === 'audit') {
+      fetchAuditLogs();
+    }
+  }, [auditPage]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -40,13 +113,15 @@ export default function AdminPage() {
         const res = await adminApi.getSyncStatus();
         setSyncStatus(res.data);
         setSyncInterval(res.data.interval_minutes || 15);
-        setAutoSyncEnabled(res.data.interval_minutes > 0);
+        setAutoSyncEnabled(res.data.auto_sync_enabled);
       } else if (activeTab === 'integrations') {
         const res = await adminApi.listIntegrations();
         setIntegrations(res.data);
       } else if (activeTab === 'projects') {
         const res = await projectApi.list();
         setProjects(res.data);
+        const usersRes = await adminApi.listUsers();
+        setUsers(usersRes.data);
       }
     } catch (error: any) {
       console.error('Error fetching admin data:', error);
@@ -101,7 +176,8 @@ export default function AdminPage() {
   };
 
   const handleToggleAutoSync = async () => {
-    const newEnabled = !autoSyncEnabled;
+    const currentEnabled = syncStatus?.auto_sync_enabled ?? autoSyncEnabled;
+    const newEnabled = !currentEnabled;
     try {
       if (newEnabled) {
         await adminApi.startSync();
@@ -127,9 +203,12 @@ export default function AdminPage() {
 
   const handleIntegrationCreate = async () => {
     try {
-      await integrationApi.create(formData);
+      await integrationApi.create({
+        ...formData,
+        config: { org: formData.org, project: formData.project },
+      });
       setShowForm(false);
-      setFormData({ tool_type: 'azure_devops', name: '', auth_type: 'token', credentials: '' });
+      setFormData({ tool_type: 'azure_devops', name: '', auth_type: 'token', credentials: '', org: '', project: '' });
       toast.success('Integration created');
       fetchData();
     } catch (error: any) {
@@ -153,12 +232,17 @@ export default function AdminPage() {
       toast.error('Enter an API token to test');
       return;
     }
+    if (formData.tool_type === 'azure_devops' && !formData.org) {
+      toast.error('Enter the Azure DevOps organisation to test');
+      return;
+    }
     setTesting(true);
     setTestResult(null);
     try {
       const res = await adminApi.testIntegrationCredentials({
         tool_type: formData.tool_type,
         credentials: formData.credentials,
+        org: formData.org || undefined,
       });
       setTestResult({ success: true, message: res.data.message || 'Connection successful' });
       toast.success('Connection successful');
@@ -250,7 +334,7 @@ export default function AdminPage() {
 
   const renderTabs = () => (
     <div className="flex border-b border-border mb-6">
-      {(['dashboard', 'users', 'integrations', 'projects', 'sync'] as Tab[]).map((tab) => (
+      {(['dashboard', 'users', 'integrations', 'projects', 'sync', 'audit'] as Tab[]).map((tab) => (
         <button
           key={tab}
           onClick={() => setActiveTab(tab)}
@@ -344,51 +428,120 @@ export default function AdminPage() {
     </Card>
   );
 
-  const renderSync = () => (
-    <div className="space-y-6">
-      <Card>
-        <h2 className="text-lg font-semibold mb-4">Sync Configuration</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="section-label">Auto Sync</label>
-            <button
-              onClick={handleToggleAutoSync}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${autoSyncEnabled ? 'bg-success/10 text-success' : 'bg-gray-100 text-gray-800'}`}
-            >
-              {autoSyncEnabled ? 'Enabled' : 'Disabled'}
-            </button>
-          </div>
-          <div>
-            <label className="section-label">Sync Interval</label>
-            <select
-              value={syncInterval}
-              onChange={(e) => handleIntervalChange(Number(e.target.value))}
-              className="input-field"
-            >
-              <option value={5}>Every 5 minutes</option>
-              <option value={15}>Every 15 minutes</option>
-              <option value={30}>Every 30 minutes</option>
-              <option value={60}>Every hour</option>
-              <option value={0}>Manual only</option>
-            </select>
-          </div>
-          <div>
-            <label className="section-label">Status</label>
-            <div className="flex items-center gap-2 mt-2">
-              <span className={`w-3 h-3 rounded-full ${syncStatus?.is_running ? 'bg-success' : 'bg-gray-400'}`}></span>
-              <span className="text-sm text-text-primary">{syncStatus?.is_running ? 'Running' : 'Stopped'}</span>
+  const refreshSyncStatus = async () => {
+    try {
+      const res = await adminApi.getSyncStatus();
+      setSyncStatus(res.data);
+      setSyncInterval(res.data.interval_minutes || 15);
+      setAutoSyncEnabled(res.data.auto_sync_enabled);
+    } catch (err: any) {
+      toast.error('Failed to refresh sync status');
+    }
+  };
+
+  const handleClearSyncHistory = async () => {
+    try {
+      await adminApi.clearSync();
+      toast.success('Sync history cleared');
+      refreshSyncStatus();
+    } catch (err: any) {
+      toast.error('Failed to clear sync history');
+    }
+  };
+
+  const renderSync = () => {
+    const result = syncStatus?.last_sync_result as { synced?: number; updated?: number; errors?: number } | null;
+
+    return (
+      <div className="space-y-4">
+        <Card>
+          <h2 className="text-lg font-semibold mb-4">Sync Configuration</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="section-label">Auto Sync</label>
+              <button
+                onClick={handleToggleAutoSync}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors w-full ${
+                  autoSyncEnabled ? 'bg-success/10 text-success hover:bg-success/20' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {autoSyncEnabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+            <div>
+              <label className="section-label">Sync Interval</label>
+              <select
+                value={syncInterval}
+                onChange={(e) => handleIntervalChange(Number(e.target.value))}
+                className="input-field"
+              >
+                <option value={5}>Every 5 minutes</option>
+                <option value={15}>Every 15 minutes</option>
+                <option value={30}>Every 30 minutes</option>
+                <option value={60}>Every hour</option>
+                <option value={0}>Manual only</option>
+              </select>
+            </div>
+            <div>
+              <label className="section-label">Scheduler Status</label>
+              <div className="flex items-center gap-2 mt-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${syncStatus?.is_running ? 'bg-success animate-pulse' : 'bg-gray-400'}`}></span>
+                <span className="text-sm text-text-primary">{syncStatus?.is_running ? 'Running' : 'Stopped'}</span>
+              </div>
+            </div>
+            <div>
+              <label className="section-label">Manual Sync</label>
+              <button onClick={handleSyncNow} disabled={syncing} className="btn-secondary mt-2 w-full">
+                {syncing ? 'Syncing...' : 'Sync Now'}
+              </button>
             </div>
           </div>
-          <div>
-            <label className="section-label">Manual Sync</label>
-            <button onClick={handleSyncNow} disabled={syncing} className="btn-secondary mt-2">
-              {syncing ? 'Syncing...' : 'Sync Now'}
+        </Card>
+
+        <Card>
+          <h2 className="text-lg font-semibold mb-4">Sync Status</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-surface-secondary rounded-lg p-3">
+              <p className="text-xs text-text-muted uppercase tracking-wide">Last Sync</p>
+              <p className="text-lg font-semibold text-text-primary mt-1">{formatRelativeTime(syncStatus?.last_sync_at ?? null)}</p>
+            </div>
+            <div className="bg-surface-secondary rounded-lg p-3">
+              <p className="text-xs text-text-muted uppercase tracking-wide">Next Sync</p>
+              <p className="text-lg font-semibold text-text-primary mt-1">{formatCountdown(syncStatus?.next_sync_at ?? null)}</p>
+            </div>
+            <div className="bg-surface-secondary rounded-lg p-3">
+              <p className="text-xs text-text-muted uppercase tracking-wide">Total Synced</p>
+              <p className="text-lg font-semibold text-text-primary mt-1">{syncStatus?.total_synced || 0}</p>
+            </div>
+            <div className="bg-surface-secondary rounded-lg p-3">
+              <p className="text-xs text-text-muted uppercase tracking-wide">Interval</p>
+              <p className="text-lg font-semibold text-text-primary mt-1">{syncStatus?.interval_minutes ? `${syncStatus.interval_minutes}m` : 'Manual'}</p>
+            </div>
+          </div>
+
+          {result && (
+            <div className="mt-4 pt-4 border-t border-border">
+              <p className="text-sm font-medium text-text-secondary mb-2">Last Sync Results</p>
+              <div className="flex gap-4 text-sm">
+                <span className="text-success font-medium">{result.synced || 0} new</span>
+                <span className="text-info font-medium">{result.updated || 0} updated</span>
+                <span className={result.errors ? 'text-error font-medium' : 'text-text-muted'}>{result.errors || 0} errors</span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2 mt-4 pt-4 border-t border-border">
+            <button onClick={refreshSyncStatus} className="btn-secondary text-sm">
+              Refresh Status
+            </button>
+            <button onClick={handleClearSyncHistory} className="btn-secondary text-sm text-error hover:text-error/80">
+              Clear History
             </button>
           </div>
-        </div>
-      </Card>
-    </div>
-  );
+        </Card>
+      </div>
+    );
+  };
 
   const renderProjects = () => (
     <div className="space-y-4">
@@ -482,7 +635,21 @@ export default function AdminPage() {
             </div>
             <div className="flex gap-2 ml-4 flex-shrink-0">
               <button
-                onClick={() => { setAssigningUsers(project.id); setSelectedUserIds(project.assigned_users?.map(u => u.user_id) || []); }}
+                onClick={async () => {
+                  if (users.length === 0) {
+                    try {
+                      console.log('[AdminPage] Fetching users for assignment...');
+                      const res = await adminApi.listUsers();
+                      console.log('[AdminPage] Users response:', res.data);
+                      setUsers(res.data);
+                    } catch (err: any) {
+                      console.error('[AdminPage] Failed to load users:', err);
+                      toast.error(err?.response?.data?.detail || 'Failed to load users');
+                    }
+                  }
+                  setAssigningUsers(project.id);
+                  setSelectedUserIds(project.assigned_users?.map(u => u.user_id) || []);
+                }}
                 className="text-sm text-primary-600 hover:text-primary-800 font-medium"
               >
                 Assign Users
@@ -507,21 +674,25 @@ export default function AdminPage() {
       {assigningUsers !== null && (
         <Card>
           <h3 className="text-md font-semibold mb-4">Assign Users to Project</h3>
-          <div className="space-y-2 max-h-60 overflow-y-auto">
-            {users.map(user => (
-              <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-surface-secondary rounded cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selectedUserIds.includes(user.id)}
-                  onChange={() => toggleUserSelection(user.id)}
-                  className="rounded"
-                />
-                <span className="text-sm text-text-primary">{user.email}</span>
-                {user.full_name && <span className="text-sm text-text-secondary">({user.full_name})</span>}
-                {user.is_admin && <span className="text-xs px-1.5 py-0.5 rounded bg-primary-100 text-primary-800">Admin</span>}
-              </label>
-            ))}
-          </div>
+          {users.length === 0 ? (
+            <p className="text-sm text-text-muted py-4">Loading users...</p>
+          ) : (
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {users.map(user => (
+                <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-surface-secondary rounded cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedUserIds.includes(user.id)}
+                    onChange={() => toggleUserSelection(user.id)}
+                    className="rounded"
+                  />
+                  <span className="text-sm text-text-primary">{user.email}</span>
+                  {user.full_name && <span className="text-sm text-text-secondary">({user.full_name})</span>}
+                  {user.is_admin && <span className="text-xs px-1.5 py-0.5 rounded bg-primary-100 text-primary-800">Admin</span>}
+                </label>
+              ))}
+            </div>
+          )}
           <div className="flex gap-2 mt-4 pt-2 border-t border-border">
             <button onClick={() => handleAssignUsers(assigningUsers)} className="btn-primary">
               Save Assignments
@@ -577,6 +748,30 @@ export default function AdminPage() {
                 <option value="token">API Token / PAT</option>
               </select>
             </div>
+            {formData.tool_type === 'azure_devops' && (
+              <>
+                <div>
+                  <label className="section-label">Organisation *</label>
+                  <input
+                    type="text"
+                    value={formData.org}
+                    onChange={(e) => setFormData({ ...formData, org: e.target.value })}
+                    className="input-field"
+                    placeholder="e.g. suriyaganesh894"
+                  />
+                </div>
+                <div>
+                  <label className="section-label">Default Project (optional)</label>
+                  <input
+                    type="text"
+                    value={formData.project}
+                    onChange={(e) => setFormData({ ...formData, project: e.target.value })}
+                    className="input-field"
+                    placeholder="e.g. AiBugTriage"
+                  />
+                </div>
+              </>
+            )}
             {formData.auth_type === 'token' && (
               <div>
                 <label className="section-label">API Token</label>
@@ -601,7 +796,7 @@ export default function AdminPage() {
                 {testing ? 'Testing...' : 'Test Connection'}
               </button>
               <button onClick={handleIntegrationCreate} disabled={!formData.credentials} className="btn-primary">Save</button>
-              <button onClick={() => { setShowForm(false); setFormData({ tool_type: 'azure_devops', name: '', auth_type: 'token', credentials: '' }); setTestResult(null); }} className="btn-secondary">Cancel</button>
+              <button onClick={() => { setShowForm(false); setFormData({ tool_type: 'azure_devops', name: '', auth_type: 'token', credentials: '', org: '', project: '' }); setTestResult(null); }} className="btn-secondary">Cancel</button>
             </div>
           </div>
         </Card>
@@ -634,6 +829,11 @@ export default function AdminPage() {
               </div>
               <p className="text-sm text-text-secondary">Type: {integration.tool_type.replace('_', ' ').toUpperCase()}</p>
               <p className="text-sm text-text-secondary">Auth: {integration.auth_type}</p>
+              {(integration.org || integration.project) && (
+                <p className="text-sm text-text-secondary">
+                  Org: <span className="font-medium">{integration.org || '-'}</span> | Project: <span className="font-medium">{integration.project || '-'}</span>
+                </p>
+              )}
               <p className="text-sm text-text-secondary">
                 Status: {integration.is_active ? 'Active' : 'Inactive'} | 
                 Last Sync: {integration.last_sync_at ? new Date(integration.last_sync_at).toLocaleString() : 'Never'}
@@ -648,6 +848,196 @@ export default function AdminPage() {
           </div>
         </Card>
       ))}
+    </div>
+  );
+
+  const actionLabels: Record<string, string> = {
+    'bug.create': 'Created Bug',
+    'bug.update': 'Updated Bug',
+    'bug.delete': 'Deleted Bug',
+    'bug.push': 'Pushed Bug to External',
+    'auth.login': 'Logged In',
+    'auth.register': 'Registered',
+    'auth.change_password': 'Changed Password',
+    'auth.update_profile': 'Updated Profile',
+    'admin.update_user_role': 'Changed User Role',
+    'admin.update_user_status': 'Changed User Status',
+    'admin.create_project': 'Created Project',
+    'admin.update_project': 'Updated Project',
+    'admin.delete_project': 'Deleted Project',
+  };
+
+  const actionColors: Record<string, string> = {
+    'bug.create': 'bg-green-100 text-green-800',
+    'bug.update': 'bg-blue-100 text-blue-800',
+    'bug.delete': 'bg-red-100 text-red-800',
+    'bug.push': 'bg-purple-100 text-purple-800',
+    'auth.login': 'bg-gray-100 text-gray-800',
+    'auth.register': 'bg-gray-100 text-gray-800',
+    'auth.change_password': 'bg-yellow-100 text-yellow-800',
+    'auth.update_profile': 'bg-blue-100 text-blue-800',
+    'admin.update_user_role': 'bg-orange-100 text-orange-800',
+    'admin.update_user_status': 'bg-orange-100 text-orange-800',
+    'admin.create_project': 'bg-teal-100 text-teal-800',
+    'admin.update_project': 'bg-teal-100 text-teal-800',
+    'admin.delete_project': 'bg-red-100 text-red-800',
+  };
+
+  function getActionLabel(action: string): string {
+    return actionLabels[action] || action;
+  }
+
+  function getActionClass(action: string): string {
+    return actionColors[action] || 'bg-gray-100 text-gray-600';
+  }
+
+  function formatAuditDate(dateStr: string): string {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function formatDetails(details: Record<string, any> | null): string {
+    if (!details) return '';
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(details)) {
+      const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      if (Array.isArray(value)) {
+        parts.push(`${label}: ${value.join(', ')}`);
+      } else if (typeof value === 'object' && value !== null) {
+        parts.push(`${label}: ${JSON.stringify(value)}`);
+      } else {
+        parts.push(`${label}: ${value}`);
+      }
+    }
+    return parts.join(' | ');
+  }
+
+  const renderAuditLogs = () => (
+    <div className="space-y-4">
+      <Card>
+        <h2 className="text-lg font-semibold mb-4">Audit Logs</h2>
+        <div className="flex flex-wrap gap-3 mb-4">
+          <div>
+            <label className="text-xs text-text-secondary block mb-1">User Email</label>
+            <input
+              type="text"
+              placeholder="Filter by email"
+              value={auditFilterEmail}
+              onChange={e => setAuditFilterEmail(e.target.value)}
+              className="input-field text-sm w-48"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-text-secondary block mb-1">Action</label>
+            <select
+              value={auditFilterAction}
+              onChange={e => setAuditFilterAction(e.target.value)}
+              className="input-field text-sm"
+            >
+              <option value="">All actions</option>
+              {Object.keys(actionLabels).map(a => (
+                <option key={a} value={a}>{actionLabels[a]}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-text-secondary block mb-1">Days</label>
+            <select
+              value={auditFilterDays}
+              onChange={e => setAuditFilterDays(Number(e.target.value))}
+              className="input-field text-sm"
+            >
+              <option value={1}>Last 24 hours</option>
+              <option value={7}>Last 7 days</option>
+              <option value={30}>Last 30 days</option>
+              <option value={90}>Last 90 days</option>
+            </select>
+          </div>
+          <div className="flex items-end gap-2">
+            <button onClick={() => { setAuditFilterEmail(''); setAuditFilterAction(''); setAuditFilterDays(7); setAuditPage(1); }} className="btn-secondary text-sm">Reset</button>
+          </div>
+        </div>
+
+        {auditLoading ? (
+          <div className="flex justify-center py-12">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+          </div>
+        ) : auditLogs.length === 0 ? (
+          <div className="text-center py-8 text-text-muted">No audit logs found.</div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border bg-gray-50">
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-text-secondary uppercase tracking-wider">User</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-text-secondary uppercase tracking-wider">Action</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-text-secondary uppercase tracking-wider">Details</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-text-secondary uppercase tracking-wider">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLogs.map((log) => (
+                    <tr key={log.id} className="border-b border-border last:border-b-0 hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm text-text-primary">{log.user_email}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${getActionClass(log.action)}`}>
+                          {getActionLabel(log.action)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {log.details ? (
+                          <button
+                            onClick={() => setAuditExpandedId(auditExpandedId === log.id ? null : log.id)}
+                            className="flex items-center gap-1 text-sm text-text-secondary hover:text-primary-600"
+                          >
+                            {auditExpandedId === log.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            {auditExpandedId === log.id ? 'Hide details' : 'View details'}
+                          </button>
+                        ) : (
+                          <span className="text-sm text-text-muted">-</span>
+                        )}
+                        {auditExpandedId === log.id && log.details && (
+                          <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-text-secondary">
+                            {formatDetails(log.details)}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-text-secondary whitespace-nowrap">
+                        {formatAuditDate(log.created_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {Math.ceil(auditTotal / auditPageSize) > 1 && (
+              <div className="flex items-center justify-between mt-4">
+                <span className="text-sm text-text-secondary">
+                  Page {auditPage} of {Math.ceil(auditTotal / auditPageSize)} ({auditTotal} total)
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setAuditPage(Math.max(1, auditPage - 1))}
+                    disabled={auditPage <= 1}
+                    className="btn-secondary px-3 py-1.5 text-sm disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setAuditPage(Math.min(Math.ceil(auditTotal / auditPageSize), auditPage + 1))}
+                    disabled={auditPage >= Math.ceil(auditTotal / auditPageSize)}
+                    className="btn-secondary px-3 py-1.5 text-sm disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
     </div>
   );
 
@@ -669,6 +1059,7 @@ export default function AdminPage() {
           {activeTab === 'sync' && renderSync()}
           {activeTab === 'integrations' && renderIntegrations()}
           {activeTab === 'projects' && renderProjects()}
+          {activeTab === 'audit' && renderAuditLogs()}
         </>
       )}
     </div>

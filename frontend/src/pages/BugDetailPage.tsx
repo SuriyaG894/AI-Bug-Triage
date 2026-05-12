@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { bugApi, Bug, PushBugResponse } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { Badge, Card, Modal, Skeleton } from '../components';
-import { ArrowLeft, ExternalLink, Loader2, CheckCircle, XCircle, Brain } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Loader2, CheckCircle, XCircle, Brain, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function BugDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [bug, setBug] = useState<Bug | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -258,6 +260,15 @@ export default function BugDetailPage() {
           <Card>
             <h2 className="text-lg font-semibold mb-4">Actions</h2>
             <div className="space-y-2">
+              {user && (user.is_admin || bug.created_by === user?.email) && (
+                <button
+                  onClick={() => navigate(`/bugs/${bug.id}/edit`)}
+                  className="w-full btn-secondary"
+                >
+                  <Pencil className="w-4 h-4 mr-2 inline" />
+                  Edit Bug
+                </button>
+              )}
               <button 
                 onClick={() => setShowPushModal(true)}
                 disabled={pushing}

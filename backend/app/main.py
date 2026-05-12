@@ -7,6 +7,7 @@ import logging
 from app.core.config import settings
 from app.core.database import init_db
 from app.api.routes import bugs, analytics, integrations, auth, admin
+from app.api.routes.audit import router as audit_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ app.include_router(
 )
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(admin.router, tags=["admin"])
+app.include_router(audit_router)
 
 try:
     from app.api.routes.uploads import router as uploads_router

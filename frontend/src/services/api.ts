@@ -53,6 +53,7 @@ export interface Bug {
   expected_result?: string | null;
   actual_result?: string | null;
   assigned_to: string | null;
+  attachments?: { url: string; name: string }[] | null;
   created_at: string;
   updated_at: string;
   analysis: AnalysisResult | null;
@@ -122,6 +123,8 @@ export interface Integration {
   is_active: boolean;
   last_sync_at: string | null;
   created_at: string;
+  org: string | null;
+  project: string | null;
 }
 
 export interface PushBugResponse {
@@ -129,6 +132,7 @@ export interface PushBugResponse {
   external_id?: string;
   url?: string;
   message: string;
+  attachment_errors?: string[];
 }
 
 export const bugApi = {
@@ -145,6 +149,9 @@ export const bugApi = {
 
   checkDuplicate: (title: string, description: string) =>
     api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { title, description }),
+
+  checkDuplicateWithExclude: (title: string, description: string, omitBugId: number) =>
+    api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { title, description, omit_bug_id: omitBugId }),
 
   suggest: (title: string, description: string, reproSteps?: string) =>
     api.post<BugSuggestion>('/bugs/suggest', {
@@ -170,7 +177,7 @@ export const analyticsApi = {
 export const integrationApi = {
   list: () => api.get<Integration[]>('/integrations'),
   
-  create: (data: { tool_type: string; name?: string; auth_type: string; credentials?: string }) =>
+  create: (data: { tool_type: string; name?: string; auth_type: string; credentials?: string; config?: any; org?: string; project?: string }) =>
     api.post<Integration>('/integrations', data),
   
   get: (id: number) => api.get<Integration>(`/integrations/${id}`),
@@ -189,12 +196,18 @@ export const uploadApi = {
   upload: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await fetch(`${API_URL}/api/upload`, {
+    const response = await fetch('/api/upload', {
       method: 'POST',
       body: formData,
     });
     if (!response.ok) {
-      throw new Error('Upload failed');
+      const errBody = await response.text().catch(() => '');
+      let detail = 'Upload failed';
+      try {
+        const parsed = JSON.parse(errBody);
+        if (parsed.detail) detail = parsed.detail;
+      } catch {}
+      throw new Error(detail);
     }
     return response.json();
   },
@@ -250,6 +263,7 @@ export interface AdminSyncStatus {
   last_sync_at: string | null;
   last_sync_result: Record<string, unknown> | null;
   total_synced: number;
+  next_sync_at: string | null;
 }
 
 export const adminApi = {
@@ -276,9 +290,11 @@ export const adminApi = {
   
   stopSync: () => api.post('/admin/sync/stop'),
   
+  clearSync: () => api.post('/admin/sync/clear'),
+  
   listIntegrations: () => api.get('/admin/integrations'),
   
-  testIntegrationCredentials: (data: { tool_type: string; credentials: string }) =>
+  testIntegrationCredentials: (data: { tool_type: string; credentials: string; org?: string }) =>
     api.post('/admin/integrations/test-credentials', data),
   
   testIntegration: (id: number) => api.post(`/admin/integrations/test/${id}`),
@@ -314,5 +330,32 @@ export interface PasswordResetResponse {
   reset_token?: string;
   message: string;
 }
+
+export interface AuditLogEntry {
+  id: number;
+  user_id: number;
+  user_email: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: number | null;
+  details: Record<string, any> | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+export interface AuditLogListResponse {
+  total: number;
+  logs: AuditLogEntry[];
+  page: number;
+  page_size: number;
+}
+
+export const auditApi = {
+  myLogs: (params?: { days?: number; page?: number; page_size?: number }) =>
+    api.get<AuditLogListResponse>('/audit/logs', { params }),
+
+  adminListLogs: (params?: { user_id?: number; user_email?: string; action?: string; days?: number; page?: number; page_size?: number }) =>
+    api.get<AuditLogListResponse>('/admin/audit-logs', { params }),
+};
 
 export default api;

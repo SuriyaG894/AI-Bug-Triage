@@ -12,12 +12,16 @@ class IntegrationBase(BaseModel):
 class IntegrationCreate(IntegrationBase):
     credentials: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
+    org: Optional[str] = None
+    project: Optional[str] = None
 
 
 class IntegrationUpdate(BaseModel):
     name: Optional[str] = None
     is_active: Optional[bool] = None
     config: Optional[Dict[str, Any]] = None
+    org: Optional[str] = None
+    project: Optional[str] = None
 
 
 class IntegrationResponse(IntegrationBase):
@@ -25,6 +29,8 @@ class IntegrationResponse(IntegrationBase):
     is_active: bool
     last_sync_at: Optional[datetime]
     created_at: datetime
+    org: Optional[str] = None
+    project: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -51,6 +57,7 @@ class PushBugResponse(BaseModel):
     url: Optional[str] = None
     message: str
     error: Optional[str] = None
+    attachment_errors: Optional[List[str]] = None
 
 
 class ExternalDuplicateCheckRequest(BaseModel):

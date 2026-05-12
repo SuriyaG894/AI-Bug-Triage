@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -11,6 +11,7 @@ import jwt
 
 from app.core.database import get_db, User
 from app.core.config import settings
+from app.services.audit_service import log_audit
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -122,6 +123,7 @@ def decode_token(token: str) -> Optional[TokenData]:
 @router.post("/register", response_model=TokenResponse)
 async def register(
     user_data: UserCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """Register a new user"""
@@ -146,6 +148,10 @@ async def register(
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
+
+    ip = request.client.host if request.client else None
+    await log_audit(db, new_user.id, new_user.email, "auth.register",
+                    details={"ip": ip}, ip_address=ip)
     
     # Create token
     access_token = create_access_token({
@@ -170,6 +176,7 @@ async def register(
 @router.post("/login", response_model=TokenResponse)
 async def login(
     credentials: UserLogin,
+    request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """Login with email and password"""
@@ -193,6 +200,10 @@ async def login(
         "sub": str(user.id),
         "email": user.email
     })
+
+    ip = request.client.host if request.client else None
+    await log_audit(db, user.id, user.email, "auth.login",
+                    details={"ip": ip}, ip_address=ip)
     
     return TokenResponse(
         access_token=access_token,
@@ -286,6 +297,9 @@ async def update_profile(
     
     await db.commit()
     await db.refresh(user)
+
+    await log_audit(db, user.id, user.email, "auth.update_profile",
+                    details={"changed_fields": ["full_name"] if data.full_name is not None else []})
     
     return UserResponse(
         id=user.id,
@@ -340,6 +354,8 @@ async def change_password(
     
     user.password_hash = hash_password(data.new_password)
     await db.commit()
+
+    await log_audit(db, user.id, user.email, "auth.change_password")
     
     return {"message": "Password changed successfully"}
 

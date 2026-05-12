@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 import asyncpg
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from urllib.parse import urlparse
 
@@ -17,30 +17,46 @@ class SyncService:
     def __init__(self):
         self._sync_task: Optional[asyncio.Task] = None
         self._running = False
+        self._last_sync_at: Optional[datetime] = None
+        self._last_sync_result: Optional[Dict[str, Any]] = None
+        self._total_synced: int = 0
     
     async def sync_ado_bugs(self) -> Dict[str, Any]:
         import httpx
         import base64
-        
+
         result = {
             "synced": 0,
             "updated": 0,
             "errors": 0,
             "started_at": datetime.utcnow().isoformat()
         }
-        
+
         try:
             from app.core.config import decrypt_api_key
-            pat = settings.AZURE_DEVOPS_PAT
+            from app.core.database import Integration, AsyncSessionLocal
+            from sqlalchemy import select
+
+            async with AsyncSessionLocal() as db:
+                db_result = await db.execute(
+                    select(Integration).where(Integration.tool_type == "azure_devops", Integration.is_active == True)
+                )
+                integration = db_result.scalar_one_or_none()
+
+            if not integration or not integration.credentials:
+                return {"error": "Azure DevOps not configured in integrations", **result}
+
+            config = integration.config or {}
+            org = config.get("org")
+            pat = integration.credentials
             if pat.startswith("ENC:"):
-                pat = decrypt_api_key(pat, settings.ENCRYPTION_KEY)
-            
-            if not pat or not settings.AZURE_DEVOPS_ORG:
-                return {"error": "Azure not configured", **result}
-            
-            org = settings.AZURE_DEVOPS_ORG
-            project = settings.AZURE_DEVOPS_PROJECT
-            base_url = f"https://dev.azure.com/{org}/{project}"
+                pat = decrypt_api_key(pat, "bug-triage-app-key")
+
+            if not org:
+                return {"error": "Azure DevOps integration missing organisation", **result}
+
+            project = config.get("project", "")
+            base_url = f"https://dev.azure.com/{org}/{project}" if project else f"https://dev.azure.com/{org}"
             
             auth = base64.b64encode(f":{pat}".encode()).decode()
             headers = {
@@ -138,8 +154,17 @@ class SyncService:
         except Exception as e:
             return {"error": str(e), **result}
         
-        result["completed_at"] = datetime.utcnow().isoformat()
+        result["completed_at"] = datetime.now(timezone.utc).isoformat()
         result["fetched"] = result["synced"] + result["updated"]
+        
+        self._last_sync_at = datetime.now(timezone.utc)
+        self._last_sync_result = {
+            "synced": result["synced"],
+            "updated": result["updated"],
+            "errors": result["errors"],
+            "fetched": result["fetched"]
+        }
+        self._total_synced += result["synced"] + result["updated"]
         return result
     
     async def _sync_loop(self):
@@ -183,6 +208,18 @@ class SyncService:
     
     def is_running(self) -> bool:
         return self._running
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "last_sync_at": self._last_sync_at.isoformat() if self._last_sync_at else None,
+            "last_sync_result": self._last_sync_result,
+            "total_synced": self._total_synced,
+        }
+    
+    def clear_status(self):
+        self._last_sync_at = None
+        self._last_sync_result = None
+        self._total_synced = 0
 
 
 _sync_service = SyncService()

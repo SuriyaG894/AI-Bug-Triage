@@ -35,6 +35,9 @@ class BugUpdate(BaseModel):
     repro_steps: Optional[str] = None
     expected_result: Optional[str] = None
     actual_result: Optional[str] = None
+    assigned_to: Optional[str] = None
+    attachments: Optional[List[Any]] = None
+    duplicate_justification: Optional[str] = None
     project_id: Optional[int] = None
 
 
@@ -90,6 +93,7 @@ class AnalysisResultResponse(BaseModel):
 class DuplicateCheckRequest(BaseModel):
     title: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
+    omit_bug_id: Optional[int] = None
 
 
 class SimilarBug(BaseModel):

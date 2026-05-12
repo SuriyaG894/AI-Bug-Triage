@@ -5,9 +5,9 @@ import {
   Bug,
   Plus,
   Shield,
+  Clock,
   ChevronLeft,
   ChevronRight,
-  FileText,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -27,6 +27,7 @@ const navItems: NavItem[] = [
   { path: '/', label: 'Dashboard', icon: <LayoutDashboard className="w-5 h-5" /> },
   { path: '/bugs', label: 'Bugs', icon: <Bug className="w-5 h-5" /> },
   { path: '/bugs/new', label: 'New Bug', icon: <Plus className="w-5 h-5" /> },
+  { path: '/audit', label: 'My Activity', icon: <Clock className="w-5 h-5" /> },
 ];
 
 const adminNavItems: NavItem[] = [
@@ -47,10 +48,8 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     <div className="flex flex-col h-full">
       {/* Logo */}
       <div className="flex items-center h-16 px-4 border-b border-gray-200">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center flex-shrink-0">
-            <FileText className="w-5 h-5 text-white" />
-          </div>
+        <div className="flex items-center gap-3 w-full">
+          <img src="/Logo.png" alt="Bug Triage" className="w-8 h-8 object-contain flex-shrink-0" />
           {!collapsed && (
             <span className="font-bold text-gray-900 whitespace-nowrap">
               Bug Triage

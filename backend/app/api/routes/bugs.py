@@ -23,6 +23,7 @@ from app.schemas import (
     BugSuggestionResponse,
 )
 from app.services.ai import classify_bug, suggest_root_causes, generate_embedding
+from app.services.audit_service import log_audit
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -146,7 +147,11 @@ async def create_bug(
     db.add(new_bug)
     await db.commit()
     await db.refresh(new_bug)
-    
+
+    await log_audit(db, bug_reporter_id or 0, bug_created_by or "", "bug.create",
+                    entity_type="bug", entity_id=new_bug.id,
+                    details={"title": new_bug.title, "severity": severity})
+
     if settings.groq_api_key_decrypted:
         try:
             embedding = await generate_embedding(bug.description)
@@ -208,14 +213,25 @@ async def list_bugs(
             )
         )).scalars().all()
         if assigned_project_ids:
-            query = query.where(Bug.project_id.in_(assigned_project_ids))
+            # Show bugs in assigned projects AND unassigned bugs (project_id is NULL)
+            query = query.where(
+                or_(
+                    Bug.project_id.in_(assigned_project_ids),
+                    Bug.project_id.is_(None)
+                )
+            )
         else:
             # No assigned projects, return empty list
             return BugListResponse(total=0, bugs=[])
 
     # Apply project filter if specified
     if project_id:
-        query = query.where(Bug.project_id == project_id)
+        query = query.where(
+            or_(
+                Bug.project_id == project_id,
+                Bug.project_id.is_(None)
+            )
+        )
 
     count_query = select(func.count()).select_from(query.subquery())
     total = await db.scalar(count_query)
@@ -251,7 +267,10 @@ async def get_bug(bug_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.put("/{bug_id}", response_model=BugResponse)
 async def update_bug(
-    bug_id: int, bug_update: BugUpdate, db: AsyncSession = Depends(get_db)
+    bug_id: int,
+    bug_update: BugUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_from_token),
 ):
     result = await db.execute(select(Bug).where(Bug.id == bug_id))
     bug = result.scalar_one_or_none()
@@ -259,59 +278,116 @@ async def update_bug(
     if not bug:
         raise HTTPException(status_code=404, detail="Bug not found")
 
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not current_user.is_admin and bug.reporter_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only edit bugs you created")
+
     update_data = bug_update.model_dump(exclude_unset=True)
+    description_changed = "description" in update_data and update_data["description"] != bug.description
+
     for field, value in update_data.items():
         setattr(bug, field, value)
 
     bug.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(bug)
+
+    changed_fields = [f for f in update_data.keys() if f != "updated_at"]
+    if changed_fields:
+        await log_audit(db, current_user.id, current_user.email, "bug.update",
+                        entity_type="bug", entity_id=bug.id,
+                        details={"changed_fields": changed_fields, "title": bug.title})
+
+    if description_changed and settings.groq_api_key_decrypted:
+        try:
+            await db.execute(
+                text("DELETE FROM bug_embeddings WHERE bug_id = :bid"),
+                {"bid": bug_id}
+            )
+            embedding = await generate_embedding(bug.description)
+            if embedding and len(embedding) >= 384:
+                db.add(BugEmbedding(bug_id=bug.id, embedding=embedding))
+                await db.commit()
+        except Exception:
+            pass
+
     return bug
 
 
 @router.delete("/{bug_id}")
-async def delete_bug(bug_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_bug(
+    bug_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_from_token),
+):
     result = await db.execute(select(Bug).where(Bug.id == bug_id))
     bug = result.scalar_one_or_none()
 
     if not bug:
         raise HTTPException(status_code=404, detail="Bug not found")
 
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not current_user.is_admin and bug.reporter_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You don't have permission to delete this bug")
+
+    # Cascade delete from Azure DevOps if previously pushed
+    if bug.external_id:
+        try:
+            from app.services.integrations.azure_devops import get_active_ado_config, AzureDevOpsClient
+            ado_config = await get_active_ado_config(db)
+            if ado_config and ado_config.get("org"):
+                client = AzureDevOpsClient(
+                    org=ado_config["org"],
+                    pat=ado_config["pat"],
+                    project=ado_config.get("project"),
+                )
+                await client.delete_work_item(bug.external_id)
+        except Exception:
+            pass
+
+    bug_title = bug.title
     await db.delete(bug)
     await db.commit()
+
+    await log_audit(db, current_user.id, current_user.email, "bug.delete",
+                    entity_type="bug", entity_id=bug_id,
+                    details={"title": bug_title})
+
     return {"message": "Bug deleted successfully"}
 
 
-async def check_azure_devops_duplicates(request_description: str, request_title: str) -> List[SimilarBug]:
+async def check_azure_devops_duplicates(db, request_description: str, request_title: str) -> List[SimilarBug]:
     """Check Azure DevOps for duplicate work items"""
-    from app.services.integrations.azure_devops import create_azure_client
-    from app.core.config import decrypt_api_key
-    
+    from app.services.integrations.azure_devops import get_active_ado_config
+
     similar = []
-    if not settings.AZURE_DEVOPS_ORG or not settings.AZURE_DEVOPS_PROJECT or not settings.AZURE_DEVOPS_PAT:
-        return similar
-    
+
     try:
-        pat = settings.AZURE_DEVOPS_PAT
-        if pat.startswith("ENC:"):
-            pat = decrypt_api_key(pat, settings.ENCRYPTION_KEY)
-        
-        client = create_azure_client(pat)
-        if not client:
+        ado_config = await get_active_ado_config(db)
+        if not ado_config or not ado_config["org"]:
             return similar
-        
+
+        org = ado_config["org"]
+        project = ado_config.get("project") or ""
+        pat = ado_config["pat"]
+
+        client = AzureDevOpsClient(org=org, pat=pat, project=project)
+
         work_items = await client.get_work_items(states=["New", "Active", "In Progress"])
-        
+
         for item in work_items:
             item_title = item.get("title", "") or item.get("webUrl", "") or ""
             item_desc = item.get("description", "") or ""
             ext_id = str(item.get("id", ""))
-            
+
             # Use combined title + description similarity for better accuracy
             similarity = calculate_combined_similarity(
                 request_title, request_description, item_title, item_desc
             )
             if similarity > 0.35:
+                project_path = f"{org}/{project}" if project else org
                 similar.append(
                     SimilarBug(
                         id=None,
@@ -322,13 +398,13 @@ async def check_azure_devops_duplicates(request_description: str, request_title:
                         status=item.get("state", ""),
                         source="azure_devops",
                         similarity=round(similarity, 3),
-                        external_url=f"https://dev.azure.com/{settings.AZURE_DEVOPS_ORG}/{settings.AZURE_DEVOPS_PROJECT}/_workitems/edit/{ext_id}",
+                        external_url=f"https://dev.azure.com/{project_path}/_workitems/edit/{ext_id}",
                         external_id=ext_id,
                     )
                 )
     except Exception:
         pass
-    
+
     return similar
 
 
@@ -455,11 +531,12 @@ async def check_duplicate(
     
     # --- Phase 1: Embedding-based similarity (most accurate) ---
     if embedding:
-        result = await db.execute(
-            select(Bug, BugEmbedding)
-            .join(BugEmbedding, Bug.id == BugEmbedding.bug_id)
-            .limit(50)
-        )
+        query = select(Bug, BugEmbedding).join(BugEmbedding, Bug.id == BugEmbedding.bug_id)
+        if request.omit_bug_id is not None:
+            query = query.where(Bug.id != request.omit_bug_id)
+        query = query.limit(50)
+
+        result = await db.execute(query)
         rows = result.all()
         
         for bug, emb in rows:
@@ -490,9 +567,12 @@ async def check_duplicate(
     
     # --- Phase 2: Text-based fallback (only if embeddings found nothing) ---
     if not similar_bugs:
-        result = await db.execute(
-            select(Bug).limit(50)
-        )
+        query = select(Bug)
+        if request.omit_bug_id is not None:
+            query = query.where(Bug.id != request.omit_bug_id)
+        query = query.limit(50)
+
+        result = await db.execute(query)
         bugs = result.scalars().all()
 
         for bug in bugs:
@@ -520,7 +600,13 @@ async def check_duplicate(
     if embedding:
         try:
             from sqlalchemy import text
-            
+            from app.services.integrations.azure_devops import get_active_ado_config
+
+            ado_config = await get_active_ado_config(db)
+            org = (ado_config or {}).get("org") if ado_config else None
+            project = (ado_config or {}).get("project") if ado_config else None
+            project_path = f"{org}/{project}" if org and project else (org or "")
+
             result = await db.execute(
                 text("""
                     SELECT id, external_id, title, description, embedding, cached_at
@@ -530,14 +616,14 @@ async def check_duplicate(
                 """)
             )
             rows = result.all()
-            
+
             for row in rows:
                 try:
                     emb_data = row[4]
                     if emb_data and len(emb_data) > 0:
                         emb_list = json.loads(emb_data)
                         ext_similarity = calculate_cosine_similarity(embedding, emb_list)
-                        
+
                         if ext_similarity > 0.35:
                             similar_bugs.append(
                                 SimilarBug(
@@ -549,7 +635,7 @@ async def check_duplicate(
                                     status="",
                                     source="azure_devops",
                                     similarity=round(ext_similarity, 3),
-                                    external_url=f"https://dev.azure.com/{settings.AZURE_DEVOPS_ORG}/{settings.AZURE_DEVOPS_PROJECT}/_workitems/edit/{row[1]}",
+                                    external_url=f"https://dev.azure.com/{project_path}/_workitems/edit/{row[1]}" if org else None,
                                     external_id=str(row[1]),
                                 )
                             )
@@ -595,6 +681,7 @@ async def push_bug_to_external(
     tool_type: str,
     project_key: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_from_token),
 ):
     """Push a bug to Azure DevOps or JIRA"""
     from app.schemas import PushBugResponse
@@ -608,7 +695,19 @@ async def push_bug_to_external(
         raise HTTPException(status_code=404, detail="Bug not found")
 
     if tool_type == "azure_devops":
-        # Get project name from bug's project_id
+        from app.services.integrations.azure_devops import get_active_ado_config, AzureDevOpsClient
+
+        ado_config = await get_active_ado_config(db)
+        if not ado_config or not ado_config["org"]:
+            return PushBugResponse(
+                success=False,
+                message="Azure DevOps not configured in integrations",
+            )
+
+        org = ado_config["org"]
+        pat = ado_config["pat"]
+
+        # Get project name from bug's project_id, or fallback to env var default
         ado_project_name = project_key
         if bug.project_id and not ado_project_name:
             project_result = await db.execute(
@@ -618,28 +717,58 @@ async def push_bug_to_external(
             if project:
                 ado_project_name = project.ado_project_name or project.name
 
-        client = create_azure_client(settings.AZURE_DEVOPS_PAT or "", project=ado_project_name)
-        if not client:
-            return PushBugResponse(
-                success=False,
-                message="Azure DevOps not configured",
+        if not ado_project_name:
+            ado_project_name = settings.AZURE_DEVOPS_PROJECT
+
+        client = AzureDevOpsClient(org=org, pat=pat, project=ado_project_name)
+
+        if bug.external_id:
+            push_result = await client.update_work_item(
+                external_id=bug.external_id,
+                title=bug.title,
+                description=bug.description,
+                severity=bug.severity,
+                bug_type=bug.type,
+                priority_value=bug.priority,
+                repro_steps=bug.repro_steps,
+                expected_result=bug.expected_result,
+                actual_result=bug.actual_result,
+                attachments=bug.attachments,
+                assigned_to=bug.assigned_to,
+                duplicate_of_external_ids=bug.duplicate_of_external_ids,
+                duplicate_justification=bug.duplicate_justification,
+                project=ado_project_name,
+            )
+        else:
+            push_result = await client.create_work_item(
+                title=bug.title,
+                description=bug.description,
+                severity=bug.severity,
+                bug_type=bug.type,
+                priority_value=bug.priority,
+                repro_steps=bug.repro_steps,
+                expected_result=bug.expected_result,
+                actual_result=bug.actual_result,
+                attachments=bug.attachments,
+                assigned_to=bug.assigned_to,
+                duplicate_of_external_ids=bug.duplicate_of_external_ids,
+                duplicate_justification=bug.duplicate_justification,
+                project=ado_project_name,
             )
 
-        push_result = await client.create_work_item(
-            title=bug.title,
-            description=bug.description,
-            severity=bug.severity,
-            bug_type=bug.type,
-            priority_value=bug.priority,
-            repro_steps=bug.repro_steps,
-            expected_result=bug.expected_result,
-            actual_result=bug.actual_result,
-            attachments=bug.attachments,
-            assigned_to=bug.assigned_to,
-            duplicate_of_external_ids=bug.duplicate_of_external_ids,
-            duplicate_justification=bug.duplicate_justification,
-            project=ado_project_name,
-        )
+        if push_result.get("success"):
+            bug.push_to_external = True
+            if push_result.get("external_id"):
+                bug.external_id = push_result["external_id"]
+            bug.updated_at = datetime.utcnow()
+            await db.commit()
+
+            if current_user:
+                await log_audit(db, current_user.id, current_user.email, "bug.push",
+                                entity_type="bug", entity_id=bug.id,
+                                details={"title": bug.title, "external_id": bug.external_id,
+                                         "tool": tool_type})
+
         return PushBugResponse(**push_result)
     
     elif tool_type == "jira":

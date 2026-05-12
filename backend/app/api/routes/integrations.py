@@ -35,12 +35,18 @@ async def create_integration(
             detail=f"Integration for {integration.tool_type} already exists",
         )
 
+    config = integration.config or {}
+    if integration.org:
+        config["org"] = integration.org
+    if integration.project:
+        config["project"] = integration.project
+
     new_integration = Integration(
         tool_type=integration.tool_type,
         name=integration.name,
         auth_type=integration.auth_type,
         credentials=integration.credentials,
-        config=integration.config,
+        config=config,
     )
     db.add(new_integration)
     await db.commit()
@@ -76,6 +82,15 @@ async def update_integration(
         raise HTTPException(status_code=404, detail="Integration not found")
 
     update_data = integration_update.model_dump(exclude_unset=True)
+    
+    if "org" in update_data or "project" in update_data:
+        config = dict(integration.config or {})
+        if "org" in update_data:
+            config["org"] = update_data.pop("org")
+        if "project" in update_data:
+            config["project"] = update_data.pop("project")
+        update_data["config"] = config
+
     for field, value in update_data.items():
         setattr(integration, field, value)
 

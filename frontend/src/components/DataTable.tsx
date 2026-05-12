@@ -6,6 +6,7 @@ export interface Column<T> {
   header: string;
   render?: (item: T) => React.ReactNode;
   sortable?: boolean;
+  sticky?: 'left' | 'right';
 }
 
 interface DataTableProps<T> {
@@ -105,6 +106,20 @@ export default function DataTable<T extends Record<string, any>>({
     );
   };
 
+  const getStickyAttrs = (column: Column<T>, rowType: 'head' | 'body') => {
+    const attrs: { className: string; style?: React.CSSProperties } = { className: '' };
+    if (column.sticky === 'left') {
+      const idx = columns.filter(c => c.sticky === 'left').findIndex(c => c.key === column.key);
+      attrs.className = 'sticky bg-white';
+      attrs.style = { left: `${idx * 120}px`, zIndex: rowType === 'head' ? 5 : 3 };
+    } else if (column.sticky === 'right') {
+      const idx = columns.filter(c => c.sticky === 'right').findIndex(c => c.key === column.key);
+      attrs.className = 'sticky bg-white';
+      attrs.style = { right: `${idx * 100}px`, zIndex: rowType === 'head' ? 5 : 3 };
+    }
+    return attrs;
+  };
+
   return (
     <div className="space-y-4">
       {/* Toolbar */}
@@ -139,21 +154,25 @@ export default function DataTable<T extends Record<string, any>>({
         <table className="table">
           <thead>
             <tr>
-              {columns.map((column) => (
-                <th
-                  key={column.key}
-                  className={column.sortable ? 'cursor-pointer select-none hover:bg-gray-100' : ''}
-                  onClick={() => column.sortable && handleSort(column.key)}
-                >
-                  <div className="flex items-center gap-2">
-                    {column.header}
-                    {column.sortable && <SortIcon columnKey={column.key} />}
-                  </div>
-                </th>
-              ))}
+              {columns.map((column) => {
+                const sa = getStickyAttrs(column, 'head');
+                return (
+                  <th
+                    key={column.key}
+                    className={`${sa.className} ${column.sortable ? 'cursor-pointer select-none hover:bg-gray-100' : ''}`}
+                    style={sa.style}
+                    onClick={() => column.sortable && handleSort(column.key)}
+                  >
+                    <div className="flex items-center gap-2">
+                      {column.header}
+                      {column.sortable && <SortIcon columnKey={column.key} />}
+                    </div>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
+          <tbody className="divide-y divide-gray-200">
             {paginatedData.length === 0 ? (
               <tr>
                 <td colSpan={columns.length} className="text-center py-12 text-gray-500">
@@ -167,11 +186,14 @@ export default function DataTable<T extends Record<string, any>>({
                   className={onRowClick ? 'cursor-pointer' : ''}
                   onClick={() => onRowClick?.(item)}
                 >
-                  {columns.map((column) => (
-                    <td key={column.key}>
-                      {column.render ? column.render(item) : String(item[column.key] ?? '')}
-                    </td>
-                  ))}
+                  {columns.map((column) => {
+                    const sa = getStickyAttrs(column, 'body');
+                    return (
+                      <td key={column.key} className={sa.className} style={sa.style}>
+                        {column.render ? column.render(item) : String(item[column.key] ?? '')}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))
             )}
