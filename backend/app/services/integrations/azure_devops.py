@@ -423,10 +423,12 @@ class AzureDevOpsClient:
         wiql += " ORDER BY [System.Id] DESC"
         
         async with httpx.AsyncClient() as client:
+            headers = self._get_headers()
+            headers["Content-Type"] = "application/json"
             response = await client.post(
                 f"{self.base_url}/_apis/wit/wiql?api-version=7.0",
                 json={"query": wiql},
-                headers=self._get_headers(),
+                headers=headers,
                 timeout=30.0,
             )
             
@@ -434,6 +436,62 @@ class AzureDevOpsClient:
                 return response.json().get("workItems", [])
             return []
     
+    async def get_work_item_details(self, external_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch full work item details including all fields."""
+        target_base = f"https://dev.azure.com/{self.org}"
+        if self.project:
+            target_base = f"{target_base}/{self.project}"
+        url = f"{target_base}/_apis/wit/workitems/{external_id}?$expand=all&api-version=7.0"
+
+        async with httpx.AsyncClient() as client:
+            auth = base64.b64encode(f":{self.pat}".encode()).decode()
+            headers = {"Authorization": f"Basic {auth}"}
+            response = await client.get(url, headers=headers, timeout=30.0)
+
+            if response.status_code == 200:
+                return response.json()
+        return None
+
+    async def get_work_item_comments(self, external_id: str, top: int = 100) -> List[Dict[str, Any]]:
+        """Fetch comments/discussion from an ADO work item."""
+        target_base = f"https://dev.azure.com/{self.org}"
+        if self.project:
+            target_base = f"{target_base}/{self.project}"
+        url = f"{target_base}/_apis/wit/workitems/{external_id}/comments?api-version=7.1-preview&$top={top}"
+
+        async with httpx.AsyncClient() as client:
+            auth = base64.b64encode(f":{self.pat}".encode()).decode()
+            headers = {"Authorization": f"Basic {auth}"}
+            response = await client.get(url, headers=headers, timeout=30.0)
+
+            if response.status_code == 200:
+                return response.json().get("comments", [])
+        return []
+
+    async def get_work_item_revisions(self, external_id: str, since: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Fetch revisions/updates of a work item (for delta sync)."""
+        target_base = f"https://dev.azure.com/{self.org}"
+        if self.project:
+            target_base = f"{target_base}/{self.project}"
+        url = f"{target_base}/_apis/wit/workitems/{external_id}/updates?api-version=7.0"
+
+        async with httpx.AsyncClient() as client:
+            auth = base64.b64encode(f":{self.pat}".encode()).decode()
+            headers = {"Authorization": f"Basic {auth}"}
+            response = await client.get(url, headers=headers, timeout=30.0)
+
+            if response.status_code == 200:
+                revisions = response.json().get("value", [])
+                if since:
+                    filtered = []
+                    for rev in revisions:
+                        rev_date = rev.get("fields", {}).get("System.ChangedDate", {}).get("newValue", "")
+                        if rev_date >= since:
+                            filtered.append(rev)
+                    return filtered
+                return revisions
+        return []
+
     async def test_connection(self) -> bool:
         """Test if connection is valid"""
         try:

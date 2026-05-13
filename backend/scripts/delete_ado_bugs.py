@@ -13,7 +13,7 @@ async def delete_all_bugs():
     client = AzureDevOpsClient(
         org=os.getenv("AZURE_DEVOPS_ORG", "suriyaganesh894"),
         project=os.getenv("AZURE_DEVOPS_PROJECT", "AiBugTriage"),
-        pat=os.getenv("ADO_PAT", "")
+        pat=os.getenv("AZURE_DEVOPS_PAT", "")
     )
     
     items = await client.get_work_items()

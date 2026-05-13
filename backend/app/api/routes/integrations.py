@@ -124,9 +124,13 @@ async def trigger_sync(integration_id: int, db: AsyncSession = Depends(get_db)):
     if not integration:
         raise HTTPException(status_code=404, detail="Integration not found")
 
+    from app.services.sync_service import _sync_service
+    sync_result = await _sync_service.sync_ado_bugs()
+
     return {
         "message": f"Sync triggered for {integration.tool_type}",
         "integration_id": integration_id,
+        "result": sync_result,
     }
 
 

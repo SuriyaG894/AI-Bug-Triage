@@ -11,6 +11,9 @@ from .bug import (
     SimilarBug,
     BugSuggestionRequest,
     BugSuggestionResponse,
+    BugCommentResponse,
+    SyncStateResponse,
+    SyncStatusResponse,
 )
 from .integration import (
     IntegrationBase,
@@ -38,6 +41,9 @@ __all__ = [
     "SimilarBug",
     "BugSuggestionRequest",
     "BugSuggestionResponse",
+    "BugCommentResponse",
+    "SyncStateResponse",
+    "SyncStatusResponse",
     "IntegrationBase",
     "IntegrationCreate",
     "IntegrationUpdate",

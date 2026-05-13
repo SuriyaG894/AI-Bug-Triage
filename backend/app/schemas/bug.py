@@ -66,6 +66,7 @@ class BugResponse(BugBase):
     created_by: Optional[str]
     created_at: datetime
     updated_at: datetime
+    last_external_updated_at: Optional[datetime] = None
     duplicate_justification: Optional[str] = None
     duplicate_of_external_ids: Optional[List[str]] = None
 
@@ -115,10 +116,48 @@ class DuplicateCheckResponse(BaseModel):
     message: str
 
 
+class BugCommentResponse(BaseModel):
+    id: int
+    bug_id: int
+    external_comment_id: Optional[str] = None
+    author: Optional[str] = None
+    body: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SyncStateResponse(BaseModel):
+    id: int
+    bug_id: int
+    external_id: str
+    last_synced_at: Optional[datetime] = None
+    external_updated_at: Optional[datetime] = None
+    status: str
+
+    class Config:
+        from_attributes = True
+
+
 class BugWithAnalysis(BugResponse):
     analysis: Optional[AnalysisResultResponse] = None
+    comments: Optional[List[BugCommentResponse]] = None
+    sync_state: Optional[SyncStateResponse] = None
+    last_external_updated_at: Optional[datetime] = None
 
 
 class BugListResponse(BaseModel):
     total: int
     bugs: List[BugResponse]
+
+
+class SyncStatusResponse(BaseModel):
+    is_running: bool
+    interval_minutes: int
+    last_sync_at: Optional[str] = None
+    last_sync_result: Optional[Dict[str, Any]] = None
+    total_synced: int = 0
+    bugs_synced: int = 0
+    conflicts: int = 0

@@ -4,6 +4,8 @@ from app.core.database import (
     AnalysisResult,
     Integration,
     ExternalIssueCache,
+    BugComment,
+    SyncState,
     AuditLog,
 )
 
@@ -13,5 +15,7 @@ __all__ = [
     "AnalysisResult",
     "Integration",
     "ExternalIssueCache",
+    "BugComment",
+    "SyncState",
     "AuditLog",
 ]

@@ -18,9 +18,16 @@ async def get_sync_status() -> Dict[str, Any]:
 
 @router.post("/trigger")
 async def trigger_sync() -> Dict[str, Any]:
-    """Manually trigger a sync."""
+    """Manually trigger a full sync from ADO to local."""
     from app.services.sync_service import trigger_sync as _trigger
     return await _trigger()
+
+
+@router.post("/trigger/{bug_id}")
+async def trigger_single_bug_sync(bug_id: int) -> Dict[str, Any]:
+    """Trigger sync for a single bug by ID."""
+    from app.services.sync_service import trigger_single_bug_sync as _trigger
+    return await _trigger(bug_id)
 
 
 @router.post("/config")

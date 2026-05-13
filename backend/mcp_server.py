@@ -443,78 +443,19 @@ async def sync_ado_to_local(limit: int = 100) -> dict:
     Args:
         limit: Maximum number of work items to sync, default 100
     """
-    if not config.ado_org or not config.ado_project or not config.ado_pat:
-        return {"error": "Azure DevOps not configured", "synced": 0}
-    
     try:
-        import asyncpg
-        
-        # Get ADO work items
-        auth = base64.b64encode(f":{config.ado_pat}".encode()).decode()
-        headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
-        base_url = f"https://dev.azure.com/{config.ado_org}/{config.ado_project}"
-        
-        wiql = f"""
-            SELECT TOP {limit} [System.Id], [System.Title], [System.Description], 
-                   [System.Severity], [System.WorkItemType], [System.State]
-            FROM WorkItems
-            WHERE [System.WorkItemType] = 'Bug'
-            ORDER BY [System.Id] DESC
-        """
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{base_url}/_apis/wit/wiql?api-version=7.0",
-                json={"query": wiql},
-                headers=headers,
-                timeout=30.0
-            )
-        
-        if response.status_code != 200:
-            return {"error": f"ADO API error: {response.status_code}", "synced": 0}
-        
-        work_items = response.json().get("workItems", [])
-        
-        # Connect to local DB
-        db_url = config.db_url
-        db_url_clean = db_url.replace("postgresql+asyncpg://", "").replace("postgresql://", "")
-        parts = db_url_clean.split("@")
-        user_pass = parts[0].split(":")
-        host_db = parts[1].split("/")
-        host_port = host_db[0].split(":")
-        
-        user = user_pass[0]
-        password = user_pass[1]
-        host = host_port[0]
-        port = int(host_port[1]) if len(host_port) > 1 else 5432
-        database = host_db[1] if len(host_db) > 1 else "bug_triage"
-        
-        conn = await asyncpg.connect(host=host, port=port, database=database, user=user, password=password)
-        
-        synced = 0
-        for item in work_items:
-            # Check if already exists
-            ext_id = str(item.get("id"))
-            existing = await conn.fetchrow(
-                "SELECT id FROM bugs WHERE external_id = $1", ext_id
-            )
-            
-            if not existing:
-                # Insert new bug from ADO
-                title = item.get("title", "Unknown")
-                description = item.get("description", "") or "Synced from ADO"
-                severity = item.get("severity", "3 - Medium") or "3 - Medium"
-                
-                await conn.execute("""
-                    INSERT INTO bugs (title, description, severity, type, status, source, external_id, created_by)
-                    VALUES ($1, $2, $3, 'bug', 'open', 'azure_devops', $4, 'system')
-                """, title, description, severity, ext_id)
-                synced += 1
-        
-        await conn.close()
-        
-        return {"synced": synced, "total_ado_items": len(work_items), "message": f"Synced {synced} new bugs from ADO"}
-        
+        from app.services.sync_service import SyncService
+        service = SyncService()
+        result = await service.sync_ado_bugs()
+
+        return {
+            "synced": result.get("synced", 0),
+            "updated": result.get("updated", 0),
+            "comments_synced": result.get("comments_synced", 0),
+            "errors": result.get("errors", 0),
+            "message": f"Synced {result.get('synced', 0)} new, updated {result.get('updated', 0)} bugs from ADO",
+        }
+
     except Exception as e:
         return {"error": str(e), "synced": 0}
 
@@ -558,6 +499,23 @@ def get_database_schema() -> str:
     - root_causes (jsonb)
     - confidence_scores (jsonb)
     - analyzed_at (datetime)
+
+    Table: bug_comments
+    - id (int, PK)
+    - bug_id (int, FK)
+    - external_comment_id (string)
+    - author (string)
+    - body (text)
+    - created_at (datetime)
+    - updated_at (datetime)
+
+    Table: sync_state
+    - id (int, PK)
+    - bug_id (int, FK, unique)
+    - external_id (string)
+    - last_synced_at (datetime)
+    - external_updated_at (datetime)
+    - status (string: pending/in_sync/conflict)
     """
 
 

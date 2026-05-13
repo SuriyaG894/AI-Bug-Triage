@@ -9,7 +9,7 @@ import json
 
 from app.core.database import get_db, User, Project, UserProjectAssignment
 from app.core.config import settings
-from app.models import Bug, AnalysisResult, BugEmbedding
+from app.models import Bug, AnalysisResult, BugEmbedding, BugComment, SyncState
 from app.schemas import (
     BugCreate,
     BugUpdate,
@@ -24,6 +24,7 @@ from app.schemas import (
 )
 from app.services.ai import classify_bug, suggest_root_causes, generate_embedding
 from app.services.audit_service import log_audit
+from app.models import SyncState
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -258,9 +259,25 @@ async def get_bug(bug_id: int, db: AsyncSession = Depends(get_db)):
     )
     analysis = analysis_result.scalar_one_or_none()
 
+    comments_result = await db.execute(
+        select(BugComment).where(BugComment.bug_id == bug_id).order_by(BugComment.created_at)
+    )
+    comments = comments_result.scalars().all()
+
+    sync_result = await db.execute(
+        select(SyncState).where(SyncState.bug_id == bug_id)
+    )
+    sync_state = sync_result.scalar_one_or_none()
+
+    from app.schemas import BugCommentResponse, SyncStateResponse
+
     bug_response = BugWithAnalysis.model_validate(bug)
     if analysis:
         bug_response.analysis = analysis
+    if comments:
+        bug_response.comments = [BugCommentResponse.model_validate(c) for c in comments]
+    if sync_state:
+        bug_response.sync_state = SyncStateResponse.model_validate(sync_state)
 
     return bug_response
 
@@ -309,6 +326,44 @@ async def update_bug(
             if embedding and len(embedding) >= 384:
                 db.add(BugEmbedding(bug_id=bug.id, embedding=embedding))
                 await db.commit()
+        except Exception:
+            pass
+
+    if bug.push_to_external and bug.external_id:
+        try:
+            from app.services.integrations.azure_devops import get_active_ado_config, AzureDevOpsClient
+            ado_config = await get_active_ado_config(db)
+            if ado_config and ado_config.get("org"):
+                client = AzureDevOpsClient(
+                    org=ado_config["org"],
+                    pat=ado_config["pat"],
+                    project=ado_config.get("project"),
+                )
+                await client.update_work_item(
+                    external_id=bug.external_id,
+                    title=bug.title,
+                    description=bug.description,
+                    severity=bug.severity,
+                    bug_type=bug.type,
+                    priority_value=bug.priority,
+                    repro_steps=bug.repro_steps,
+                    expected_result=bug.expected_result,
+                    actual_result=bug.actual_result,
+                    attachments=bug.attachments,
+                    assigned_to=bug.assigned_to,
+                )
+                bug.last_external_updated_at = datetime.utcnow()
+                sync_state_result = await db.execute(
+                    select(SyncState).where(SyncState.bug_id == bug.id)
+                )
+                sync_state = sync_state_result.scalar_one_or_none()
+                if sync_state:
+                    sync_state.last_synced_at = datetime.utcnow()
+                    sync_state.status = "in_sync"
+                await db.commit()
+                await log_audit(db, current_user.id, current_user.email, "bug.sync_push",
+                                entity_type="bug", entity_id=bug.id,
+                                details={"title": bug.title, "external_id": bug.external_id})
         except Exception:
             pass
 

@@ -64,6 +64,7 @@ class Bug(Base):
     assigned_to = Column(String(100), nullable=True)
     duplicate_justification = Column(Text, nullable=True)
     duplicate_of_external_ids = Column(JSON, nullable=True)
+    last_external_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -113,6 +114,29 @@ class ExternalIssueCache(Base):
     extra_data = Column(JSONB, nullable=True)
     cached_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=True)
+
+
+class BugComment(Base):
+    __tablename__ = "bug_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bug_id = Column(Integer, ForeignKey("bugs.id", ondelete="CASCADE"), nullable=False, index=True)
+    external_comment_id = Column(String(100), nullable=True)
+    author = Column(String(255), nullable=True)
+    body = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SyncState(Base):
+    __tablename__ = "sync_state"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bug_id = Column(Integer, ForeignKey("bugs.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    external_id = Column(String(100), nullable=False)
+    last_synced_at = Column(DateTime, nullable=True)
+    external_updated_at = Column(DateTime, nullable=True)
+    status = Column(String(20), default="pending")
 
 
 class User(Base):
