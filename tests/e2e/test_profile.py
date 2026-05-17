@@ -30,7 +30,7 @@ with sync_playwright() as p:
     email_shown = page.locator('text=test@example.com').count()
     print(f"   - Email displayed: {'OK' if email_shown else 'FAILED'}")
     
-    page.screenshot(path="profile_test.png")
+    page.screenshot(path="tests/e2e/assets/profile_test.png")
     print("   - Screenshot saved")
     
     print("3. Testing logout button...")

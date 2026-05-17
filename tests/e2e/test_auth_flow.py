@@ -65,7 +65,7 @@ with sync_playwright() as p:
     is_new_bug_page = "/bugs/new" in current_url
     print(f"   - Can access /bugs/new: {'OK' if is_new_bug_page else 'FAILED (at ' + current_url + ')'}")
     
-    page.screenshot(path="auth_flow_test.png")
+    page.screenshot(path="tests/e2e/assets/auth_flow_test.png")
     print("\nAll flow tests completed! Screenshot saved to auth_flow_test.png")
     
     browser.close()

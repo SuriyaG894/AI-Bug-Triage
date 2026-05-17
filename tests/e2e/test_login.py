@@ -37,7 +37,7 @@ with sync_playwright() as p:
     print(f"   - Can access /bugs/new: {'OK' if is_new_bug_page else 'FAILED (at ' + current_url + ')'}")
     
     print("3. Taking screenshot...")
-    page.screenshot(path="login_test.png")
+    page.screenshot(path="tests/e2e/assets/login_test.png")
     print("   - Screenshot saved")
     
     print("\nAll tests completed!")

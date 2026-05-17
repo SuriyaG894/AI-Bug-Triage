@@ -33,7 +33,7 @@ with sync_playwright() as p:
     time.sleep(3)
     
     # Get screenshot of result
-    page.screenshot(path="frontend_result.png")
+    page.screenshot(path="tests/e2e/assets/frontend_result.png")
     print("Result screenshot saved")
     
     browser.close()

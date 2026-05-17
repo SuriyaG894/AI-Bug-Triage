@@ -57,7 +57,7 @@ with sync_playwright() as p:
     print(f"   - Redirected to login: {'OK' if redirected else 'FAILED (at ' + current_url + ')'}")
     
     # Save screenshot
-    page.screenshot(path="auth_test.png")
+    page.screenshot(path="tests/e2e/assets/auth_test.png")
     print("   - Screenshot saved to auth_test.png")
     
     print("\nAll tests completed!")

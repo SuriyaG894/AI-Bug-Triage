@@ -30,7 +30,7 @@ with sync_playwright() as p:
     time.sleep(3)
     
     # Take screenshot
-    page.screenshot(path="bug_creation_test.png")
+    page.screenshot(path="tests/e2e/assets/bug_creation_test.png")
     
     # Check if modal appeared
     page_content = page.content()
