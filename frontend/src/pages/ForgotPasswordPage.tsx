@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { authApi } from '../services/api';
+import AuthLayout from '../components/AuthLayout';
 
 type Step = 'email' | 'otp' | 'reset';
 
@@ -77,104 +78,6 @@ export default function ForgotPasswordPage() {
     }
   };
 
-  const renderEmailStep = () => (
-    <form onSubmit={handleSendOTP} className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Email Address
-        </label>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          className="input-field"
-          placeholder="you@example.com"
-        />
-      </div>
-      <button
-        type="submit"
-        disabled={loading}
-        className="w-full btn-primary"
-      >
-        {loading ? 'Sending...' : 'Send Verification Code'}
-      </button>
-    </form>
-  );
-
-  const renderOTPStep = () => (
-    <form onSubmit={handleVerifyOTP} className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Verification Code
-        </label>
-        <input
-          type="text"
-          value={otp}
-          onChange={(e) => setOtp(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6))}
-          required
-          maxLength={6}
-          className="input-field text-center text-2xl tracking-widest font-mono"
-          placeholder="000000"
-        />
-        <p className="text-xs text-gray-500 mt-1">Enter the 6-digit code sent to your email</p>
-      </div>
-      <button
-        type="submit"
-        disabled={loading || otp.length !== 6}
-        className="w-full btn-primary"
-      >
-        {loading ? 'Verifying...' : 'Verify Code'}
-      </button>
-      <button
-        type="button"
-        onClick={() => setStep('email')}
-        className="w-full text-sm text-gray-600 hover:text-gray-800"
-      >
-        Use a different email
-      </button>
-    </form>
-  );
-
-  const renderResetStep = () => (
-    <form onSubmit={handleResetPassword} className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          New Password
-        </label>
-        <input
-          type="password"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-          required
-          minLength={8}
-          className="input-field"
-          placeholder="Minimum 8 characters"
-        />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Confirm Password
-        </label>
-        <input
-          type="password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
-          required
-          className="input-field"
-          placeholder="Re-enter password"
-        />
-      </div>
-      <button
-        type="submit"
-        disabled={loading}
-        className="w-full btn-primary"
-      >
-        {loading ? 'Resetting...' : 'Reset Password'}
-      </button>
-    </form>
-  );
-
   const getStepTitle = () => {
     switch (step) {
       case 'email': return 'Forgot Password';
@@ -183,56 +86,144 @@ export default function ForgotPasswordPage() {
     }
   };
 
+  const stepIndex = ['email', 'otp', 'reset'].indexOf(step);
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          {getStepTitle()}
-        </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
-          <Link to="/login" className="font-medium text-blue-600 hover:text-blue-500">
-            Back to login
-          </Link>
-        </p>
-      </div>
-
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          {/* Progress indicator */}
-          <div className="flex justify-center mb-6">
-            <div className="flex items-center space-x-4">
-              {['email', 'otp', 'reset'].map((s, i) => (
-                <div key={s} className="flex items-center">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                    step === s ? 'bg-blue-600 text-white' :
-                    ['email', 'otp', 'reset'].indexOf(step) > i ? 'bg-green-500 text-white' :
-                    'bg-gray-200 text-gray-500'
-                  }`}>
-                    {['email', 'otp', 'reset'].indexOf(step) > i ? '✓' : i + 1}
-                  </div>
-                  {i < 2 && <div className="w-8 h-0.5 bg-gray-200 mx-2" />}
-                </div>
-              ))}
+    <AuthLayout title={getStepTitle()}>
+      {/* Progress stepper */}
+      <div className="flex justify-center mb-6">
+        <div className="flex items-center gap-2">
+          {['email', 'otp', 'reset'].map((s, i) => (
+            <div key={s} className="flex items-center">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
+                step === s
+                  ? 'bg-primary-600 text-white'
+                  : stepIndex > i
+                    ? 'bg-green-500 text-white'
+                    : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+              }`}>
+                {stepIndex > i ? '✓' : i + 1}
+              </div>
+              {i < 2 && (
+                <div className={`w-8 h-0.5 mx-1 transition-colors ${
+                  stepIndex > i ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-600'
+                }`} />
+              )}
             </div>
-          </div>
-
-          {error && (
-            <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-              {error}
-            </div>
-          )}
-
-          {success && (
-            <div className="mb-4 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded">
-              {success}
-            </div>
-          )}
-
-          {step === 'email' && renderEmailStep()}
-          {step === 'otp' && renderOTPStep()}
-          {step === 'reset' && renderResetStep()}
+          ))}
         </div>
       </div>
-    </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg text-sm">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="mb-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 px-4 py-3 rounded-lg text-sm">
+          {success}
+        </div>
+      )}
+
+      {step === 'email' && (
+        <form onSubmit={handleSendOTP} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Email Address
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="input-field"
+              placeholder="you@example.com"
+            />
+          </div>
+          <button type="submit" disabled={loading} className="btn-primary w-full">
+            {loading ? 'Sending...' : 'Send Verification Code'}
+          </button>
+        </form>
+      )}
+
+      {step === 'otp' && (
+        <form onSubmit={handleVerifyOTP} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Verification Code
+            </label>
+            <input
+              type="text"
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6))}
+              required
+              maxLength={6}
+              className="input-field text-center text-2xl tracking-widest font-mono"
+              placeholder="000000"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Enter the 6-digit code sent to your email</p>
+          </div>
+          <button
+            type="submit"
+            disabled={loading || otp.length !== 6}
+            className="btn-primary w-full"
+          >
+            {loading ? 'Verifying...' : 'Verify Code'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setStep('email')}
+            className="w-full text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+          >
+            Use a different email
+          </button>
+        </form>
+      )}
+
+      {step === 'reset' && (
+        <form onSubmit={handleResetPassword} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              New Password
+            </label>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              minLength={8}
+              className="input-field"
+              placeholder="Minimum 8 characters"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Confirm Password
+            </label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              className="input-field"
+              placeholder="Re-enter password"
+            />
+          </div>
+          <button type="submit" disabled={loading} className="btn-primary w-full">
+            {loading ? 'Resetting...' : 'Reset Password'}
+          </button>
+        </form>
+      )}
+
+      <div className="mt-6 text-center">
+        <a
+          href="/login"
+          className="text-sm font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+        >
+          &larr; Back to login
+        </a>
+      </div>
+    </AuthLayout>
   );
 }

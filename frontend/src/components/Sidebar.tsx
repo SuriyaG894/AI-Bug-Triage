@@ -11,6 +11,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import Logo from './Logo';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -51,12 +52,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {/* Logo */}
       <div className="flex items-center h-16 px-4 border-b border-gray-200">
         <div className="flex items-center gap-3 w-full">
-          <img src="/Logo.png" alt="Bug Triage" className="w-8 h-8 object-contain flex-shrink-0" />
-          {!collapsed && (
-            <span className="font-bold text-gray-900 whitespace-nowrap">
-              Bug Triage
-            </span>
-          )}
+          <Logo showText={!collapsed} className={collapsed ? 'w-8 h-8 flex-shrink-0' : 'h-9 w-auto flex-shrink-0'} />
         </div>
       </div>
 
