@@ -91,8 +91,28 @@ export default function AboutPage() {
             For questions, feature requests, or bug reports, please reach out to the development team.
           </p>
           <div className="text-sm text-text-secondary space-y-1">
-            <p><span className="font-medium text-text-primary">Documentation:</span> Available in the repository</p>
-            <p><span className="font-medium text-text-primary">Issues:</span> Submit via the project tracker</p>
+            <p>
+              <span className="font-medium text-text-primary">Documentation:</span>{' '}
+              <a 
+                href="https://github.com/SuriyaG894/AI-Bug-Triage/blob/main/docs/E2E_SUPPORT_GUIDE.md" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary-600 dark:text-primary-400 hover:underline"
+              >
+                E2E Support Guide
+              </a>
+            </p>
+            <p>
+              <span className="font-medium text-text-primary">Issues:</span>{' '}
+              <a 
+                href="https://github.com/SuriyaG894/AI-Bug-Triage/issues" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary-600 dark:text-primary-400 hover:underline"
+              >
+                Submit via GitHub Issues
+              </a>
+            </p>
           </div>
         </Card>
       </div>
