@@ -17,6 +17,8 @@ from app.services.integrations.field_mapping import (
     extract_ado_timestamp,
     strip_html,
 )
+from app.core.events import event_bus, Event
+from app.core import event_names
 
 
 class SyncService:
@@ -55,16 +57,20 @@ class SyncService:
                     result["completed_at"] = datetime.now(timezone.utc).isoformat()
                     return result
 
+                all_events: List[Event] = []
                 for item in work_items[:50]:
                     try:
                         ext_id = str(item.get("id"))
-                        await self._sync_single_bug(db, client, ext_id, result)
+                        events = await self._sync_single_bug(db, client, ext_id, result)
+                        all_events.extend(events)
                     except Exception as e:
                         print(f"Error syncing bug {item.get('id')}: {e}")
                         result["errors"] += 1
 
                 if result["synced"] > 0 or result["updated"] > 0:
                     await db.commit()
+                    for event in all_events:
+                        await event_bus.publish(event)
 
                 integration_result = await db.execute(
                     select(Integration).where(
@@ -101,11 +107,11 @@ class SyncService:
         client: AzureDevOpsClient,
         ext_id: str,
         result: Dict[str, Any],
-    ):
+    ) -> List[Event]:
         details = await client.get_work_item_details(ext_id)
         if not details:
             result["errors"] += 1
-            return
+            return []
 
         fields = details.get("fields", {})
         ado_changed_date = extract_ado_timestamp(fields.get("System.ChangedDate"))
@@ -116,13 +122,14 @@ class SyncService:
         existing_bug = existing_bug_result.scalar_one_or_none()
 
         if existing_bug:
-            await self._update_existing_bug(
+            return await self._update_existing_bug(
                 db, client, existing_bug, fields, ado_changed_date, result
             )
         else:
             await self._create_bug_from_ado(
                 db, client, details, fields, ext_id, ado_changed_date, result
             )
+            return []
 
     async def _create_bug_from_ado(
         self,
@@ -184,7 +191,9 @@ class SyncService:
         fields: Dict[str, Any],
         ado_changed_date: Optional[datetime],
         result: Dict[str, Any],
-    ):
+    ) -> List[Event]:
+        events: List[Event] = []
+
         sync_state_result = await db.execute(
             select(SyncState).where(SyncState.bug_id == bug.id)
         )
@@ -192,17 +201,19 @@ class SyncService:
 
         if not ado_changed_date:
             result["skipped"] += 1
-            return
+            return events
 
         if (
             bug.last_external_updated_at
             and ado_changed_date <= bug.last_external_updated_at
         ):
             result["skipped"] += 1
-            return
+            return events
 
         mapped = ado_to_local(fields)
         changed = False
+        old_status = bug.status
+        old_assigned_to = bug.assigned_to
 
         if mapped.get("title") and mapped["title"] != bug.title:
             bug.title = mapped["title"]
@@ -245,6 +256,16 @@ class SyncService:
             bug.updated_at = datetime.utcnow()
             result["updated"] += 1
 
+            if mapped.get("status") and mapped["status"] != old_status:
+                events.append(Event(event_names.SYNC_BUG_UPDATED, {
+                    "bug_id": bug.id,
+                    "title": bug.title,
+                    "old_status": old_status,
+                    "new_status": bug.status,
+                    "reporter_id": bug.reporter_id,
+                    "assigned_to": bug.assigned_to,
+                }))
+
             embedding = generate_embedding(f"{bug.title} {bug.description}")
             if embedding and len(embedding) >= 384:
                 await db.execute(
@@ -255,6 +276,8 @@ class SyncService:
         else:
             bug.last_external_updated_at = ado_changed_date
             result["skipped"] += 1
+
+        return events
 
         if sync_state:
             sync_state.last_synced_at = datetime.utcnow()
@@ -354,11 +377,13 @@ class SyncService:
                 )
 
                 sync_result = {}
-                await self._update_existing_bug(
+                events = await self._update_existing_bug(
                     db, client, bug, fields, ado_changed_date, sync_result
                 )
 
                 await db.commit()
+                for event in events:
+                    await event_bus.publish(event)
 
                 result["updated"] = sync_result.get("updated", False)
                 result["synced"] = True

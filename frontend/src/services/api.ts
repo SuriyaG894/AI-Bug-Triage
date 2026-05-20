@@ -356,4 +356,46 @@ export const auditApi = {
     api.get<AuditLogListResponse>('/admin/audit-logs', { params }),
 };
 
+export interface NotificationItem {
+  id: number;
+  user_id: number;
+  type: string;
+  title: string;
+  message: string | null;
+  link: string | null;
+  is_read: boolean;
+  metadata_?: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface NotificationListResponse {
+  total: number;
+  unread_count: number;
+  notifications: NotificationItem[];
+}
+
+export interface UnreadCountResponse {
+  count: number;
+}
+
+export const notificationApi = {
+  list: (params?: { limit?: number; offset?: number; unread_only?: boolean }) =>
+    api.get<NotificationListResponse>('/notifications', { params }),
+
+  unreadCount: () =>
+    api.get<UnreadCountResponse>('/notifications/unread-count'),
+
+  markRead: (id: number) =>
+    api.put(`/notifications/${id}/read`),
+
+  markAllRead: () =>
+    api.put('/notifications/read-all'),
+
+  getSettings: () =>
+    api.get<{ email_notifications: boolean }>('/notifications/settings'),
+
+  updateSettings: (data: { email_notifications: boolean }) =>
+    api.put('/notifications/settings', data),
+};
+
 export default api;

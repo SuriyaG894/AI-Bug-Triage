@@ -6,6 +6,7 @@ import {
   Plus,
   Shield,
   Clock,
+  Bell,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -28,6 +29,7 @@ const navItems: NavItem[] = [
   { path: '/bugs', label: 'Bugs', icon: <Bug className="w-5 h-5" /> },
   { path: '/bugs/new', label: 'New Bug', icon: <Plus className="w-5 h-5" /> },
   { path: '/audit', label: 'My Activity', icon: <Clock className="w-5 h-5" /> },
+  { path: '/notifications', label: 'Notifications', icon: <Bell className="w-5 h-5" /> },
 ];
 
 const adminNavItems: NavItem[] = [

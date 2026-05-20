@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { Settings, User, Shield, Bell, Palette, Globe, Save, Loader2, Monitor, Moon, Sun } from 'lucide-react';
 import Card from '../components/Card';
 import toast from 'react-hot-toast';
+import { notificationApi } from '../services/api';
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -11,6 +12,7 @@ export default function SettingsPage() {
     email: '',
   });
   const [saving, setSaving] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('light');
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [language, setLanguage] = useState('en');
@@ -23,6 +25,26 @@ export default function SettingsPage() {
       });
     }
   }, [user]);
+
+  useEffect(() => {
+    notificationApi.getSettings().then(res => {
+      setEmailNotifications(res.data.email_notifications);
+    }).catch(() => {});
+  }, []);
+
+  const handleEmailToggle = async () => {
+    const newVal = !emailNotifications;
+    setEmailNotifications(newVal);
+    setSettingsSaving(true);
+    try {
+      await notificationApi.updateSettings({ email_notifications: newVal });
+    } catch {
+      setEmailNotifications(!newVal);
+      toast.error('Failed to update notification settings');
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -125,7 +147,8 @@ export default function SettingsPage() {
               <p className="text-xs text-text-muted">Receive updates about bug assignments and status changes</p>
             </div>
             <button
-              onClick={() => setEmailNotifications(!emailNotifications)}
+              onClick={handleEmailToggle}
+              disabled={settingsSaving}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                 emailNotifications ? 'bg-primary-600' : 'bg-gray-300'
               }`}

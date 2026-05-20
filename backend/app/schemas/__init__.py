@@ -15,6 +15,12 @@ from .bug import (
     SyncStateResponse,
     SyncStatusResponse,
 )
+from .notification import (
+    NotificationResponse,
+    NotificationListResponse,
+    UnreadCountResponse,
+    NotificationSettingsUpdate,
+)
 from .integration import (
     IntegrationBase,
     IntegrationCreate,
@@ -30,6 +36,10 @@ from .integration import (
 
 __all__ = [
     "BugBase",
+    "NotificationResponse",
+    "NotificationListResponse",
+    "UnreadCountResponse",
+    "NotificationSettingsUpdate",
     "BugCreate",
     "BugUpdate",
     "BugResponse",

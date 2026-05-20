@@ -13,6 +13,7 @@ import RegisterPage from './pages/RegisterPage';
 import AdminPage from './pages/AdminPage';
 import AuditPage from './pages/AuditPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import NotificationsPage from './pages/NotificationsPage';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/bugs/:id" element={<Layout><ProtectedRoute><BugDetailPage /></ProtectedRoute></Layout>} />
           <Route path="/profile" element={<Layout><ProtectedRoute><ProfilePage /></ProtectedRoute></Layout>} />
           <Route path="/audit" element={<Layout><ProtectedRoute><AuditPage /></ProtectedRoute></Layout>} />
+          <Route path="/notifications" element={<Layout><ProtectedRoute><NotificationsPage /></ProtectedRoute></Layout>} />
           <Route path="/admin" element={<Layout><ProtectedRoute><AdminPage /></ProtectedRoute></Layout>} />
         </Routes>
       </BrowserRouter>

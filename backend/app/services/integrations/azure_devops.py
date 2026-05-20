@@ -76,6 +76,12 @@ class AzureDevOpsClient:
                     repro_steps_formatted += f"<li>{step}</li>"
             repro_steps_formatted += "</ul>"
 
+        justification_html = ""
+        if duplicate_justification:
+            justification_html = f"""
+<h3>Justification for Duplicate</h3>
+<p>{duplicate_justification}</p>"""
+
         full_description = f"""<h3>Description</h3>
 <p>{description}</p>
 
@@ -87,10 +93,7 @@ class AzureDevOpsClient:
 
 <h3>Steps to Reproduce</h3>
 {repro_steps_formatted or '<p>Not provided</p>'}
-
-<h3>Justification for Duplicate</h3>
-<p>{duplicate_justification or 'Not provided'}</p>
-
+{justification_html}
 <table>
 <tr><td><b>Priority:</b></td><td>{priority_value or 'Not set'}</td></tr>
 <tr><td><b>Severity:</b></td><td>{severity}</td></tr>
@@ -185,6 +188,12 @@ class AzureDevOpsClient:
                     repro_steps_formatted += f"<li>{step}</li>"
             repro_steps_formatted += "</ul>"
 
+        justification_html = ""
+        if duplicate_justification:
+            justification_html = f"""
+<h3>Justification for Duplicate</h3>
+<p>{duplicate_justification}</p>"""
+
         full_description = f"""<h3>Description</h3>
 <p>{description}</p>
 
@@ -196,10 +205,7 @@ class AzureDevOpsClient:
 
 <h3>Steps to Reproduce</h3>
 {repro_steps_formatted or '<p>Not provided</p>'}
-
-<h3>Justification for Duplicate</h3>
-<p>{duplicate_justification or 'Not provided'}</p>
-
+{justification_html}
 <table>
 <tr><td><b>Priority:</b></td><td>{priority_value or 'Not set'}</td></tr>
 <tr><td><b>Severity:</b></td><td>{severity}</td></tr>

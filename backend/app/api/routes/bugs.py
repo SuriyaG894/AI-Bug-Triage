@@ -25,6 +25,8 @@ from app.schemas import (
 from app.services.ai import classify_bug, suggest_root_causes, generate_embedding
 from app.services.audit_service import log_audit
 from app.models import SyncState
+from app.core.events import event_bus, Event
+from app.core import event_names
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -152,6 +154,15 @@ async def create_bug(
     await log_audit(db, bug_reporter_id or 0, bug_created_by or "", "bug.create",
                     entity_type="bug", entity_id=new_bug.id,
                     details={"title": new_bug.title, "severity": severity})
+
+    # Notify assignee if set
+    if new_bug.assigned_to:
+        await event_bus.publish(Event(event_names.BUG_ASSIGNED, {
+            "bug_id": new_bug.id,
+            "title": new_bug.title,
+            "assignee_email": new_bug.assigned_to,
+            "changed_by": current_user.email if current_user else "system",
+        }))
 
     if settings.groq_api_key_decrypted:
         try:
@@ -303,6 +314,9 @@ async def update_bug(
     update_data = bug_update.model_dump(exclude_unset=True)
     description_changed = "description" in update_data and update_data["description"] != bug.description
 
+    old_status = bug.status
+    old_assigned_to = bug.assigned_to
+
     for field, value in update_data.items():
         setattr(bug, field, value)
 
@@ -315,6 +329,25 @@ async def update_bug(
         await log_audit(db, current_user.id, current_user.email, "bug.update",
                         entity_type="bug", entity_id=bug.id,
                         details={"changed_fields": changed_fields, "title": bug.title})
+
+    if "status" in update_data and update_data["status"] != old_status:
+        await event_bus.publish(Event(event_names.BUG_STATUS_CHANGED, {
+            "bug_id": bug.id,
+            "title": bug.title,
+            "old_status": old_status,
+            "new_status": update_data["status"],
+            "changed_by": current_user.email,
+            "reporter_id": bug.reporter_id,
+            "assigned_to": bug.assigned_to,
+        }))
+
+    if "assigned_to" in update_data and update_data["assigned_to"] and update_data["assigned_to"] != old_assigned_to:
+        await event_bus.publish(Event(event_names.BUG_ASSIGNED, {
+            "bug_id": bug.id,
+            "title": bug.title,
+            "assignee_email": update_data["assigned_to"],
+            "changed_by": current_user.email,
+        }))
 
     if description_changed and settings.groq_api_key_decrypted:
         try:
@@ -403,12 +436,19 @@ async def delete_bug(
             pass
 
     bug_title = bug.title
+    bug_reporter_id = bug.reporter_id
     await db.delete(bug)
     await db.commit()
 
     await log_audit(db, current_user.id, current_user.email, "bug.delete",
                     entity_type="bug", entity_id=bug_id,
                     details={"title": bug_title})
+
+    await event_bus.publish(Event(event_names.BUG_DELETED, {
+        "reporter_id": bug_reporter_id,
+        "title": bug_title,
+        "deleted_by": current_user.email,
+    }))
 
     return {"message": "Bug deleted successfully"}
 

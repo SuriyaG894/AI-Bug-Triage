@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.api.routes import bugs, analytics, integrations, auth, admin
 from app.api.routes.audit import router as audit_router
+from app.api.routes.notifications import router as notifications_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,6 +19,20 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up...")
     await init_db()
     logger.info("Database initialized")
+
+    from app.core.events import event_bus
+    from app.subscribers.notification_subscriber import (
+        on_bug_assigned,
+        on_bug_status_changed,
+        on_bug_deleted,
+        on_sync_bug_updated,
+    )
+    from app.core import event_names
+    event_bus.subscribe(event_names.BUG_ASSIGNED, on_bug_assigned)
+    event_bus.subscribe(event_names.BUG_STATUS_CHANGED, on_bug_status_changed)
+    event_bus.subscribe(event_names.BUG_DELETED, on_bug_deleted)
+    event_bus.subscribe(event_names.SYNC_BUG_UPDATED, on_sync_bug_updated)
+    logger.info("Event subscribers registered")
     
     try:
         from app.services.sync_service import _sync_service
@@ -61,6 +76,7 @@ app.include_router(
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(admin.router, tags=["admin"])
 app.include_router(audit_router)
+app.include_router(notifications_router)
 
 try:
     from app.api.routes.uploads import router as uploads_router

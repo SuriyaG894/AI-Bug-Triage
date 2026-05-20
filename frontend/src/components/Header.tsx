@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
-  Bell,
   User,
   LogOut,
   ChevronDown,
@@ -12,6 +11,7 @@ import {
   Monitor,
   ChevronUp,
 } from 'lucide-react';
+import NotificationDropdown from './NotificationDropdown';
 
 interface HeaderProps {
   collapsed: boolean;
@@ -105,10 +105,7 @@ export default function Header({ collapsed }: HeaderProps) {
         </div>
 
         {/* Notifications */}
-        <button className="btn-icon relative">
-          <Bell className="w-5 h-5" />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
-        </button>
+        {user && <NotificationDropdown />}
 
         {/* User menu */}
         {user && (
