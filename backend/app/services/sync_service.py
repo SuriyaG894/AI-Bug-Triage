@@ -44,7 +44,8 @@ class SyncService:
             async with AsyncSessionLocal() as db:
                 ado_config = await get_active_ado_config(db)
                 if not ado_config or not ado_config.get("org"):
-                    return {"error": "Azure DevOps not configured", **result}
+                    result["completed_at"] = datetime.now(timezone.utc).isoformat()
+                    return self._record_sync_result(result)
 
                 client = AzureDevOpsClient(
                     org=ado_config["org"],
@@ -55,7 +56,8 @@ class SyncService:
                 work_items = await client.get_work_items()
                 if not work_items:
                     result["completed_at"] = datetime.now(timezone.utc).isoformat()
-                    return result
+                    await self._persist_integration_sync_time(db)
+                    return self._record_sync_result(result)
 
                 all_events: List[Event] = []
                 for item in work_items[:50]:
@@ -72,33 +74,41 @@ class SyncService:
                     for event in all_events:
                         await event_bus.publish(event)
 
-                integration_result = await db.execute(
-                    select(Integration).where(
-                        Integration.tool_type == "azure_devops",
-                        Integration.is_active == True,
-                    )
-                )
-                integration = integration_result.scalar_one_or_none()
-                if integration:
-                    integration.last_sync_at = datetime.utcnow()
-                    await db.commit()
+                await self._persist_integration_sync_time(db)
 
         except Exception as e:
-            return {"error": str(e), **result}
+            result["completed_at"] = datetime.now(timezone.utc).isoformat()
+            return self._record_sync_result(result, error=str(e))
 
         result["completed_at"] = datetime.now(timezone.utc).isoformat()
         result["fetched"] = result["synced"] + result["updated"]
+        return self._record_sync_result(result)
 
+    async def _persist_integration_sync_time(self, db):
+        integration_result = await db.execute(
+            select(Integration).where(
+                Integration.tool_type == "azure_devops",
+                Integration.is_active == True,
+            )
+        )
+        integration = integration_result.scalar_one_or_none()
+        if integration:
+            integration.last_sync_at = datetime.utcnow()
+            await db.commit()
+
+    def _record_sync_result(self, result: Dict[str, Any], error: Optional[str] = None) -> Dict[str, Any]:
         self._last_sync_at = datetime.now(timezone.utc)
         self._last_sync_result = {
-            "synced": result["synced"],
-            "updated": result["updated"],
-            "errors": result["errors"],
-            "conflicts": result["conflicts"],
-            "comments_synced": result["comments_synced"],
-            "fetched": result["fetched"],
+            "synced": result.get("synced", 0),
+            "updated": result.get("updated", 0),
+            "errors": result.get("errors", 0),
+            "conflicts": result.get("conflicts", 0),
+            "comments_synced": result.get("comments_synced", 0),
+            "fetched": result.get("synced", 0) + result.get("updated", 0),
         }
-        self._total_synced += result["synced"] + result["updated"]
+        if error:
+            self._last_sync_result["error"] = error
+        self._total_synced += result.get("synced", 0) + result.get("updated", 0)
         return result
 
     async def _sync_single_bug(
@@ -277,8 +287,6 @@ class SyncService:
             bug.last_external_updated_at = ado_changed_date
             result["skipped"] += 1
 
-        return events
-
         if sync_state:
             sync_state.last_synced_at = datetime.utcnow()
             sync_state.external_updated_at = ado_changed_date
@@ -295,6 +303,8 @@ class SyncService:
             )
 
         await self._sync_comments_for_bug(db, client, bug.external_id, bug.id, result)
+
+        return events
 
     async def _sync_comments_for_bug(
         self,

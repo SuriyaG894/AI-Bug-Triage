@@ -263,6 +263,7 @@ async def get_sync_status(
     """Get sync status (admin only)."""
     from app.services.sync_service import _sync_service
     from app.core.config import settings
+    from app.core.database import AsyncSessionLocal, Integration
     
     is_running = _sync_service.is_running()
     interval_minutes = getattr(settings, 'SYNC_INTERVAL_MINUTES', 15)
@@ -272,6 +273,21 @@ async def get_sync_status(
     last_sync_at = svc_status.get("last_sync_at")
     last_sync_result = svc_status.get("last_sync_result")
     total_synced = svc_status.get("total_synced", 0)
+
+    if not last_sync_at:
+        try:
+            async with AsyncSessionLocal() as _db:
+                _result = await _db.execute(
+                    select(Integration).where(
+                        Integration.tool_type == "azure_devops",
+                        Integration.is_active == True,
+                    )
+                )
+                _integration = _result.scalar_one_or_none()
+                if _integration and _integration.last_sync_at:
+                    last_sync_at = _integration.last_sync_at.isoformat()
+        except Exception:
+            pass
     
     next_sync_at = None
     if auto_sync_enabled and interval_minutes > 0:
