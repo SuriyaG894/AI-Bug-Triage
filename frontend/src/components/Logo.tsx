@@ -139,7 +139,7 @@ export default function Logo({ className = 'h-10 w-auto', showText = true }: Log
             y="55"
             className="text-gray-900 dark:text-white font-bold select-none transition-colors duration-300"
             style={{
-              fontFamily: "'Outfit', 'Inter', -apple-system, sans-serif",
+              fontFamily: "'Inter', -apple-system, sans-serif",
               fontSize: '36px',
               fontWeight: 800,
               letterSpacing: '2px',
@@ -168,7 +168,7 @@ export default function Logo({ className = 'h-10 w-auto', showText = true }: Log
             textAnchor="middle"
             className="text-gray-600 dark:text-gray-400 select-none transition-colors duration-300"
             style={{
-              fontFamily: "'Outfit', 'Inter', -apple-system, sans-serif",
+              fontFamily: "'Inter', -apple-system, sans-serif",
               fontSize: '11px',
               fontWeight: 600,
               letterSpacing: '4px',

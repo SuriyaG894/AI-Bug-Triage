@@ -10,6 +10,7 @@ import {
   Moon,
   Monitor,
   ChevronUp,
+  Info,
 } from 'lucide-react';
 import NotificationDropdown from './NotificationDropdown';
 
@@ -149,6 +150,14 @@ export default function Header({ collapsed }: HeaderProps) {
                   >
                     <User className="w-4 h-4" />
                     Profile
+                  </Link>
+                  <Link
+                    to="/about"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <Info className="w-4 h-4" />
+                    About
                   </Link>
                   {user.is_admin && (
                     <Link

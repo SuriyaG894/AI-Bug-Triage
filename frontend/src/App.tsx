@@ -14,6 +14,7 @@ import AdminPage from './pages/AdminPage';
 import AuditPage from './pages/AuditPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import NotificationsPage from './pages/NotificationsPage';
+import AboutPage from './pages/AboutPage';
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/about" element={<AboutPage />} />
           <Route path="/" element={<Layout><ProtectedRoute><HomePage /></ProtectedRoute></Layout>} />
           <Route path="/bugs" element={<Layout><ProtectedRoute><BugListPage /></ProtectedRoute></Layout>} />
           <Route path="/bugs/new" element={<Layout><ProtectedRoute><BugFormPage /></ProtectedRoute></Layout>} />

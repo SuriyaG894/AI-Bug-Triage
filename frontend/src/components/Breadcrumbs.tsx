@@ -18,6 +18,7 @@ const routeMap: Record<string, string> = {
   '/login': 'Login',
   '/register': 'Register',
   '/forgot-password': 'Forgot Password',
+  '/about': 'About',
 };
 
 export default function Breadcrumbs() {

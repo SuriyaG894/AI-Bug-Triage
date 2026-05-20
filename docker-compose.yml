@@ -86,6 +86,7 @@ services:
     depends_on:
       - backend
     volumes:
+      - ./frontend/index.html:/app/index.html
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
     command: npm run dev -- --host
