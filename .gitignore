@@ -83,5 +83,9 @@ coverage/
 # Sample UI
 enterprise-ui-sample/
 docs/feature-analysis.md
+docs/ado-sync-plan.md
 fix/
 frontend-demo/
+DEPLOYMENT_PLAN.md
+implementation_plan_file_upload
+session-sec_256a.md
