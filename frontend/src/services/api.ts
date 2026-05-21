@@ -145,11 +145,11 @@ export const bugApi = {
 
   delete: (id: number) => api.delete(`/bugs/${id}`),
 
-  checkDuplicate: (title: string, description: string) =>
-    api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { title, description }),
+  checkDuplicate: (title: string, description: string, reproSteps?: string) =>
+    api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { title, description, repro_steps: reproSteps }),
 
-  checkDuplicateWithExclude: (title: string, description: string, omitBugId: number) =>
-    api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { title, description, omit_bug_id: omitBugId }),
+  checkDuplicateWithExclude: (title: string, description: string, omitBugId: number, reproSteps?: string) =>
+    api.post<DuplicateCheckResponse>('/bugs/check-duplicate', { title, description, omit_bug_id: omitBugId, repro_steps: reproSteps }),
 
   suggest: (title: string, description: string, reproSteps?: string) =>
     api.post<BugSuggestion>('/bugs/suggest', {

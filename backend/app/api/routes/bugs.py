@@ -23,6 +23,7 @@ from app.schemas import (
     BugSuggestionResponse,
 )
 from app.services.ai import classify_bug, suggest_root_causes, generate_embedding
+from app.services.duplicate_detection import find_duplicate_matches
 from app.services.audit_service import log_audit
 from app.models import SyncState
 from app.core.events import event_bus, Event
@@ -618,142 +619,7 @@ def calculate_combined_similarity(title1: str, desc1: str, title2: str, desc2: s
 async def check_duplicate(
     request: DuplicateCheckRequest, db: AsyncSession = Depends(get_db)
 ):
-    similar_bugs = []
-    
-    # Use BOTH title and description for embedding generation (more context = better matching)
-    combined_text = f"{request.title}. {request.description}"
-    embedding = await generate_embedding(combined_text)
-    
-    # --- Phase 1: Embedding-based similarity (most accurate) ---
-    if embedding:
-        query = select(Bug, BugEmbedding).join(BugEmbedding, Bug.id == BugEmbedding.bug_id)
-        if request.omit_bug_id is not None:
-            query = query.where(Bug.id != request.omit_bug_id)
-        query = query.limit(50)
-
-        result = await db.execute(query)
-        rows = result.all()
-        
-        for bug, emb in rows:
-            if emb is not None:
-                emb_array = emb.embedding
-                if emb_array is not None and len(emb_array) > 0:
-                    emb_similarity = calculate_cosine_similarity(embedding, list(emb_array))
-                    # Also calculate text similarity as a cross-check
-                    text_sim = calculate_combined_similarity(
-                        request.title, request.description,
-                        bug.title, bug.description or ""
-                    )
-                    # Use the higher of the two scores
-                    similarity = max(emb_similarity, text_sim)
-                    if similarity > 0.4:
-                        similar_bugs.append(
-                            SimilarBug(
-                                id=bug.id,
-                                title=bug.title,
-                                description=bug.description,
-                                severity=bug.severity,
-                                type=bug.type,
-                                status=bug.status,
-                                source=bug.source,
-                                similarity=round(similarity, 3),
-                            )
-                        )
-    
-    # --- Phase 2: Text-based fallback (only if embeddings found nothing) ---
-    if not similar_bugs:
-        query = select(Bug)
-        if request.omit_bug_id is not None:
-            query = query.where(Bug.id != request.omit_bug_id)
-        query = query.limit(50)
-
-        result = await db.execute(query)
-        bugs = result.scalars().all()
-
-        for bug in bugs:
-            # Calculate proper combined similarity instead of arbitrary scores
-            similarity = calculate_combined_similarity(
-                request.title, request.description,
-                bug.title, bug.description or ""
-            )
-            if similarity > 0.35:
-                similar_bugs.append(
-                    SimilarBug(
-                        id=bug.id,
-                        title=bug.title,
-                        description=bug.description,
-                        severity=bug.severity,
-                        type=bug.type,
-                        status=bug.status,
-                        source=bug.source,
-                        similarity=round(similarity, 3),
-                    )
-                )
-
-    # --- Phase 3: External sources (synced local cache) ---
-    # Query external_issue_cache which has synced ADO bugs with embeddings
-    if embedding:
-        try:
-            from sqlalchemy import text
-            from app.services.integrations.azure_devops import get_active_ado_config
-
-            ado_config = await get_active_ado_config(db)
-            org = (ado_config or {}).get("org") if ado_config else None
-            project = (ado_config or {}).get("project") if ado_config else None
-            project_path = f"{org}/{project}" if org and project else (org or "")
-
-            result = await db.execute(
-                text("""
-                    SELECT id, external_id, title, description, embedding, cached_at
-                    FROM external_issue_cache
-                    WHERE embedding IS NOT NULL AND integration_id = 1
-                    LIMIT 50
-                """)
-            )
-            rows = result.all()
-
-            for row in rows:
-                try:
-                    emb_data = row[4]
-                    if emb_data and len(emb_data) > 0:
-                        emb_list = json.loads(emb_data)
-                        ext_similarity = calculate_cosine_similarity(embedding, emb_list)
-
-                        if ext_similarity > 0.35:
-                            similar_bugs.append(
-                                SimilarBug(
-                                    id=None,
-                                    title=row[2],
-                                    description=row[3][:200] if row[3] else "",
-                                    severity="",
-                                    type="azure_devops",
-                                    status="",
-                                    source="azure_devops",
-                                    similarity=round(ext_similarity, 3),
-                                    external_url=f"https://dev.azure.com/{project_path}/_workitems/edit/{row[1]}" if org else None,
-                                    external_id=str(row[1]),
-                                )
-                            )
-                except Exception as e:
-                    print(f"Error processing external bug {row[1]}: {e}")
-        except Exception as e:
-            print(f"Error checking external cache: {e}")
-    
-    # Sort by similarity and keep top 5
-    similar_bugs.sort(key=lambda x: x.similarity, reverse=True)
-    similar_bugs = similar_bugs[:5]
-    
-    # Filter out low-confidence matches (below 0.35 combined threshold)
-    similar_bugs = [b for b in similar_bugs if b.similarity >= 0.35]
-
-    # Only flag as duplicate if top match has high confidence
-    is_duplicate = len(similar_bugs) > 0 and similar_bugs[0].similarity > 0.85
-
-    return DuplicateCheckResponse(
-        is_duplicate=is_duplicate,
-        similar_bugs=similar_bugs,
-        message="Potential duplicates found" if similar_bugs else "No duplicates found",
-    )
+    return await find_duplicate_matches(db, request)
 
 
 def calculate_cosine_similarity(a: List[float], b: List[float]) -> float:

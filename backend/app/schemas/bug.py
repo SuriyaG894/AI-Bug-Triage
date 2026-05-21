@@ -95,6 +95,7 @@ class DuplicateCheckRequest(BaseModel):
     title: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
     omit_bug_id: Optional[int] = None
+    repro_steps: Optional[str] = None
 
 
 class SimilarBug(BaseModel):

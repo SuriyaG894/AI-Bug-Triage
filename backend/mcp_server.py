@@ -25,6 +25,12 @@ except ImportError:
 
 import httpx
 
+from app.services.duplicate_detection import (
+    build_search_terms,
+    calculate_duplicate_similarity,
+    coerce_embedding,
+)
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -132,7 +138,9 @@ def text_similarity(text1: str, text2: str) -> float:
 async def search_local_db(
     description: str,
     min_similarity: float = 0.7,
-    limit: int = 10
+    limit: int = 10,
+    title: str = "",
+    repro_steps: str = ""
 ) -> dict:
     """
     Search local database for duplicate bugs using semantic embedding.
@@ -172,8 +180,9 @@ async def search_local_db(
             password=password
         )
         
-        # Generate embedding
-        embedding = generate_embedding(description)
+        # Generate embedding from all available request context.
+        query_text = " ".join(part for part in [title, description, repro_steps] if part)
+        embedding = generate_embedding(query_text or description)
         
         # Query bugs with embeddings
         rows = await conn.fetch("""
@@ -182,14 +191,50 @@ async def search_local_db(
             FROM bugs b
             LEFT JOIN bug_embeddings be ON b.id = be.bug_id
             WHERE be.embedding IS NOT NULL
-            LIMIT 50
+            LIMIT 100
         """)
         
         similar_bugs = []
         for row in rows:
-            emb_data = row['embedding']
-            if emb_data and len(emb_data) > 0:
-                similarity = cosine_similarity(embedding, list(emb_data))
+            candidate_embedding = coerce_embedding(row['embedding'])
+            similarity = calculate_duplicate_similarity(
+                title,
+                description,
+                row['title'] or "",
+                row['description'] or "",
+                request_repro_steps=repro_steps,
+                candidate_embedding=candidate_embedding,
+                request_embedding=embedding,
+            )
+            if similarity >= min_similarity:
+                similar_bugs.append({
+                    "id": row['id'],
+                    "title": row['title'],
+                    "description": row['description'][:200] + "..." if row['description'] and len(row['description']) > 200 else row['description'],
+                    "severity": row['severity'],
+                    "type": row['type'],
+                    "status": row['status'],
+                    "similarity": round(similarity, 3),
+                    "source": "local_db"
+                })
+
+        if not similar_bugs:
+            fallback_rows = await conn.fetch("""
+                SELECT id, title, description, severity, type, status
+                FROM bugs
+                ORDER BY updated_at DESC
+                LIMIT 100
+            """)
+
+            for row in fallback_rows:
+                similarity = calculate_duplicate_similarity(
+                    title,
+                    description,
+                    row['title'] or "",
+                    row['description'] or "",
+                    request_repro_steps=repro_steps,
+                    request_embedding=embedding,
+                )
                 if similarity >= min_similarity:
                     similar_bugs.append({
                         "id": row['id'],
@@ -216,7 +261,8 @@ async def search_local_db(
 async def search_ado_duplicates(
     description: str,
     title: str = "",
-    min_similarity: float = 0.5
+    min_similarity: float = 0.5,
+    repro_steps: str = ""
 ) -> dict:
     """
     Search Azure DevOps for duplicate work items using WIQL.
@@ -236,7 +282,6 @@ async def search_ado_duplicates(
     
     try:
         # Auth
-        import re
         auth = base64.b64encode(f":{config.ado_pat}".encode()).decode()
         headers = {
             "Authorization": f"Basic {auth}",
@@ -245,11 +290,8 @@ async def search_ado_duplicates(
         
         base_url = f"https://dev.azure.com/{config.ado_org}/{config.ado_project}"
         
-        # Build WIQL query - use only alphanumeric keywords
-        search_text = title if title else description[:100]
-        # Only use safe characters for WIQL
-        keywords = [re.sub(r'[^a-zA-Z0-9]', '', w) for w in search_text.split() if len(w) > 3][:5]
-        keywords = [w for w in keywords if len(w) > 3]  # Filter out empty after cleanup
+        # Build WIQL query from the same normalized tokens used for scoring.
+        keywords = build_search_terms(title, description, repro_steps, limit=5)
         
         if not keywords:
             return {"results": [], "message": "No valid keywords for search"}
@@ -263,6 +305,9 @@ async def search_ado_duplicates(
             ORDER BY [System.Id] DESC
         """
         
+        similar_items = []
+        request_embedding = generate_embedding(f"{title} {description} {repro_steps}".strip())
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{base_url}/_apis/wit/wiql?api-version=7.0",
@@ -271,34 +316,51 @@ async def search_ado_duplicates(
                 timeout=30.0
             )
         
-        if response.status_code != 200:
-            return {"error": f"ADO API error: {response.status_code}", "results": []}
-        
-        work_items = response.json().get("workItems", [])
-        
-        similar_items = []
-        search_text = f"{title} {description}".lower()
-        
-        for item in work_items[:20]:
-            item_title = item.get("title", "")
-            item_desc = item.get("description", "") or ""
+            if response.status_code != 200:
+                return {"error": f"ADO API error: {response.status_code}", "results": []}
             
-            # Calculate similarity
-            sim = text_similarity(search_text, item_title.lower())
-            if sim < min_similarity:
-                sim = text_similarity(search_text, item_desc[:200].lower())
+            work_items = response.json().get("workItems", [])
             
-            if sim >= min_similarity:
-                similar_items.append({
-                    "id": item.get("id"),
-                    "title": item_title,
-                    "description": item_desc[:200] + "..." if len(item_desc) > 200 else item_desc,
-                    "state": item.get("state"),
-                    "work_item_type": item.get("workItemType"),
-                    "similarity": round(sim, 3),
-                    "source": "azure_devops",
-                    "url": f"https://dev.azure.com/{config.ado_org}/{config.ado_project}/_workitems/edit/{item.get('id')}"
-                })
+            for item in work_items[:20]:
+                item_id = item.get("id")
+                if not item_id:
+                    continue
+
+                detail_resp = await client.get(
+                    f"{base_url}/_apis/wit/workitems/{item_id}?$expand=all&api-version=7.0",
+                    headers=headers,
+                    timeout=30.0,
+                )
+                if detail_resp.status_code != 200:
+                    continue
+
+                details = detail_resp.json()
+                fields = details.get("fields", {})
+                item_title = fields.get("System.Title", "") or ""
+                item_desc = fields.get("System.Description", "") or ""
+                item_state = fields.get("System.State", "") or ""
+                item_type = fields.get("System.WorkItemType", "") or ""
+
+                sim = calculate_duplicate_similarity(
+                    title,
+                    description,
+                    item_title,
+                    item_desc,
+                    request_repro_steps=repro_steps,
+                    request_embedding=request_embedding,
+                )
+
+                if sim >= min_similarity:
+                    similar_items.append({
+                        "id": item_id,
+                        "title": item_title,
+                        "description": item_desc[:200] + "..." if len(item_desc) > 200 else item_desc,
+                        "state": item_state,
+                        "work_item_type": item_type,
+                        "similarity": round(sim, 3),
+                        "source": "azure_devops",
+                        "url": f"https://dev.azure.com/{config.ado_org}/{config.ado_project}/_workitems/edit/{item_id}"
+                    })
         
         similar_items.sort(key=lambda x: x['similarity'], reverse=True)
         return {"results": similar_items[:10], "total": len(similar_items)}
@@ -311,7 +373,8 @@ async def search_ado_duplicates(
 async def check_duplicates(
     title: str,
     description: str,
-    min_similarity: float = 0.7
+    min_similarity: float = 0.7,
+    repro_steps: str = ""
 ) -> dict:
     """
     Check for duplicates across both local DB and Azure DevOps.
@@ -327,8 +390,8 @@ async def check_duplicates(
     """
     # Search both sources in parallel
     local_results, ado_results = await asyncio.gather(
-        search_local_db(description, min_similarity),
-        search_ado_duplicates(description, title, min_similarity)
+        search_local_db(description, min_similarity, title=title, repro_steps=repro_steps),
+        search_ado_duplicates(description, title, min_similarity, repro_steps=repro_steps)
     )
     
     # Combine and sort
@@ -344,7 +407,7 @@ async def check_duplicates(
     
     all_results.sort(key=lambda x: x["similarity"], reverse=True)
     
-    is_duplicate = len(all_results) > 0 and all_results[0]["similarity"] > 0.8
+    is_duplicate = len(all_results) > 0 and all_results[0]["similarity"] >= 0.82
     
     return {
         "is_duplicate": is_duplicate,

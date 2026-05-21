@@ -48,7 +48,7 @@ export default function Modal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[5vh] pb-4 px-4">
       {/* Overlay */}
       <div
         className={`fixed inset-0 bg-black/50 animate-fade-in ${closeOnOverlay ? 'cursor-pointer' : ''}`}
@@ -58,14 +58,14 @@ export default function Modal({
       {/* Dialog */}
       <div
         ref={dialogRef}
-        className={`relative w-full ${sizeClasses[size]} bg-white rounded-xl shadow-lg animate-fade-in`}
+        className={`relative w-full ${sizeClasses[size]} bg-white rounded-xl shadow-lg animate-fade-in flex flex-col max-h-[90vh]`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? 'modal-title' : undefined}
       >
         {/* Header */}
         {(title || description) && (
-          <div className="px-6 py-4 border-b border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0">
             <div className="flex items-center justify-between">
               <div>
                 {title && (
@@ -89,11 +89,11 @@ export default function Modal({
         )}
 
         {/* Body */}
-        <div className="px-6 py-4">{children}</div>
+        <div className="px-6 py-4 overflow-y-auto">{children}</div>
 
         {/* Footer */}
         {footer && (
-          <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+          <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl flex-shrink-0">
             <div className="flex justify-end gap-3">{footer}</div>
           </div>
         )}

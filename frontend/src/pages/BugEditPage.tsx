@@ -1,10 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
-import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi, projectApi, Project } from '../services/api';
+import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi, projectApi, Project, Bug } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Badge, Card, Modal } from '../components';
-import { ArrowLeft, Loader2, Brain, AlertTriangle, Paperclip, X, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Loader2, Brain, AlertTriangle, Paperclip, X, ExternalLink, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface BugEditInputs {
@@ -51,6 +51,9 @@ export default function BugEditPage() {
   const [showPushOption, setShowPushOption] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [bugId, setBugId] = useState<number | null>(null);
+  const [viewBug, setViewBug] = useState<Bug | null>(null);
+  const [loadingViewBug, setLoadingViewBug] = useState(false);
+  const [showViewModal, setShowViewModal] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -134,12 +137,26 @@ export default function BugEditPage() {
 
     setCheckingDuplicate(true);
     try {
-      const response = await bugApi.checkDuplicateWithExclude(title, description, bugId!);
+      const response = await bugApi.checkDuplicateWithExclude(title, description, bugId!, reproSteps);
       setDuplicateResult(response.data);
     } catch (error) {
       console.error('Error checking duplicates:', error);
     } finally {
       setCheckingDuplicate(false);
+    }
+  };
+
+  const openBugDetail = async (bugId: number) => {
+    setLoadingViewBug(true);
+    setShowViewModal(true);
+    try {
+      const response = await bugApi.get(bugId);
+      setViewBug(response.data);
+    } catch (error) {
+      toast.error('Failed to load bug details');
+      setShowViewModal(false);
+    } finally {
+      setLoadingViewBug(false);
     }
   };
 
@@ -395,6 +412,7 @@ export default function BugEditPage() {
                 className="input-field"
                 rows={4}
                 placeholder="1. Go to login page\n2. Enter valid credentials\n3. Click login button"
+                onBlur={checkDuplicate}
               />
               {errors.repro_steps && (
                 <p className="mt-1 text-sm text-red-600">{errors.repro_steps.message}</p>
@@ -599,34 +617,65 @@ export default function BugEditPage() {
         )}
 
         {duplicateResult && duplicateResult.similar_bugs.length > 0 && (
-          <Card className="bg-orange-50 border-orange-200">
-            <div className="flex items-center gap-2 mb-3">
-              <AlertTriangle className="w-5 h-5 text-orange-600" />
-              <h3 className="text-lg font-semibold text-orange-800">
+          <Card className="border-gray-200 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              <h3 className="text-base font-semibold text-gray-900">
                 Similar Bugs Found ({duplicateResult.similar_bugs.length})
               </h3>
             </div>
-            <div className="space-y-2">
-              {duplicateResult.similar_bugs.slice(0, 3).map((bug, idx) => (
-                <div key={bug.id || bug.external_id || idx} className="bg-white p-3 rounded-lg border border-orange-100">
-                  <div className="flex justify-between items-start">
-                    <p className="font-medium text-sm">{bug.title}</p>
-                    {bug.source === 'azure_devops' && (
-                      <Badge label="ADO" />
-                    )}
+            <div className="divide-y divide-gray-100 -mx-4 -mb-4">
+              {duplicateResult.similar_bugs.slice(0, 3).map((bug, idx) => {
+                const pct = Math.round(bug.similarity * 100);
+                const isHigh = pct >= 82;
+                const isMid = pct >= 60;
+                const barColor = isHigh ? 'bg-red-500' : isMid ? 'bg-amber-500' : 'bg-blue-500';
+                const badgeStyle = isHigh
+                  ? 'bg-red-50 text-red-700 border-red-200'
+                  : isMid
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : 'bg-blue-50 text-blue-700 border-blue-200';
+                return (
+                  <div key={bug.id || bug.external_id || idx} className="flex items-center gap-4 px-4 py-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{bug.title}</p>
+                      <div className="flex items-center gap-3 mt-1.5">
+                        <div className="flex-1 max-w-[200px] bg-gray-100 rounded-full h-1.5">
+                          <div className={`h-1.5 rounded-full transition-all duration-300 ${barColor}`} style={{ width: `${pct}%` }} />
+                        </div>
+                        {bug.source === 'azure_devops' && (
+                          <span className="text-xs text-gray-400 font-medium">ADO</span>
+                        )}
+                        {bug.source !== 'azure_devops' && bug.source && (
+                          <span className="text-xs text-gray-400 font-medium capitalize">{bug.source}</span>
+                        )}
+                      </div>
+                    </div>
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold border ${badgeStyle} flex-shrink-0`}>
+                      {pct}%
+                    </span>
+                    {bug.source === 'azure_devops' && bug.external_url ? (
+                      <a
+                        href={bug.external_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 transition-colors flex-shrink-0"
+                      >
+                        ADO
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : bug.id ? (
+                      <button
+                        onClick={() => openBugDetail(bug.id!)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors flex-shrink-0"
+                      >
+                        <Eye className="w-3 h-3" />
+                        View
+                      </button>
+                    ) : null}
                   </div>
-                  {bug.source === 'azure_devops' && bug.external_url && (
-                    <a href={bug.external_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 mt-1">
-                      View in Azure DevOps
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    {Math.round(bug.similarity * 100)}% match
-                    {bug.severity && ` • ${bug.severity}`}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
         )}
@@ -683,20 +732,63 @@ export default function BugEditPage() {
         size="lg"
       >
         {pendingDuplicateBug && (
-          <div className="space-y-4">
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-              <h4 className="text-sm font-medium text-orange-800 mb-2">Similar Bugs:</h4>
-              <ul className="space-y-2">
+          <div className="space-y-5">
+            <div>
+              <h4 className="text-sm font-semibold text-gray-900 mb-3">
+                Similar Bugs ({pendingDuplicateBug.similar_bugs.length})
+              </h4>
+              <div className="divide-y divide-gray-100 border border-gray-200 rounded-lg">
                 {pendingDuplicateBug.similar_bugs
-                  .filter(b => b.source === 'azure_devops')
-                  .slice(0, 3)
-                  .map((bug, idx) => (
-                    <li key={idx} className="flex items-center justify-between text-sm">
-                      <span className="text-gray-700">{bug.title}</span>
-                      <span className="text-orange-600 font-medium ml-2">{Math.round(bug.similarity * 100)}%</span>
-                    </li>
-                  ))}
-              </ul>
+                  .slice(0, 5)
+                  .map((bug, idx) => {
+                    const pct = Math.round(bug.similarity * 100);
+                    const isHigh = pct >= 82;
+                    const isMid = pct >= 60;
+                    const barColor = isHigh ? 'bg-red-500' : isMid ? 'bg-amber-500' : 'bg-blue-500';
+                    const badgeStyle = isHigh
+                      ? 'bg-red-50 text-red-700 border-red-200'
+                      : isMid
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-blue-50 text-blue-700 border-blue-200';
+                    return (
+                      <div key={idx} className="flex items-center gap-4 px-4 py-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-gray-900 truncate">{bug.title}</p>
+                            {bug.source === 'azure_devops' && (
+                              <span className="text-xs text-gray-400 font-medium flex-shrink-0">ADO</span>
+                            )}
+                          </div>
+                          <div className="mt-2 max-w-[240px] bg-gray-100 rounded-full h-1.5">
+                            <div className={`h-1.5 rounded-full transition-all duration-300 ${barColor}`} style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold border flex-shrink-0 ${badgeStyle}`}>
+                          {pct}%
+                        </span>
+                        {bug.source === 'azure_devops' && bug.external_url ? (
+                          <a
+                            href={bug.external_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 transition-colors flex-shrink-0"
+                          >
+                            ADO
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ) : bug.id ? (
+                          <button
+                            onClick={() => openBugDetail(bug.id!)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors flex-shrink-0"
+                          >
+                            <Eye className="w-3 h-3" />
+                            View
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -730,6 +822,91 @@ export default function BugEditPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Bug Detail Modal */}
+      <Modal
+        isOpen={showViewModal}
+        onClose={() => { setShowViewModal(false); setViewBug(null); }}
+        title="Bug Details"
+        size="lg"
+      >
+        {loadingViewBug ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+          </div>
+        ) : viewBug ? (
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-base font-bold text-gray-900">{viewBug.title}</h3>
+              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                <Badge label={viewBug.severity} variant="severity" color={viewBug.severity as any} />
+                {viewBug.priority && <Badge label={viewBug.priority} />}
+                <Badge label={viewBug.status} variant="status" color={viewBug.status as any} />
+                {viewBug.type && <Badge label={viewBug.type} />}
+                {viewBug.source && <Badge label={viewBug.source} variant="source" color={viewBug.source === 'azure_devops' ? 'external' : 'internal'} />}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <div className="flex gap-1">
+                <span className="text-gray-400">By:</span>
+                <span className="text-gray-700 truncate">{viewBug.created_by || '-'}</span>
+              </div>
+              <div className="flex gap-1">
+                <span className="text-gray-400">To:</span>
+                <span className="text-gray-700 truncate">{viewBug.assigned_to || '-'}</span>
+              </div>
+              <div className="flex gap-1">
+                <span className="text-gray-400">Created:</span>
+                <span className="text-gray-700">{new Date(viewBug.created_at).toLocaleDateString()}</span>
+              </div>
+              <div className="flex gap-1">
+                <span className="text-gray-400">Updated:</span>
+                <span className="text-gray-700">{new Date(viewBug.updated_at).toLocaleDateString()}</span>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs text-gray-400 mb-1">Description</p>
+              <div className="text-sm text-gray-900 bg-gray-50 rounded p-2 whitespace-pre-wrap">{viewBug.description}</div>
+            </div>
+
+            {viewBug.repro_steps && (
+              <div>
+                <p className="text-xs text-gray-400 mb-1">Repro Steps</p>
+                <ul className="list-disc list-inside text-sm text-gray-900 bg-gray-50 rounded p-2 space-y-0.5">
+                  {viewBug.repro_steps.split('\n').filter(Boolean).map((step, i) => (
+                    <li key={i}>{step.replace(/^\d+[.)\s]*/, '')}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              {viewBug.expected_result && (
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Expected</p>
+                  <ul className="list-disc list-inside text-sm text-gray-900 bg-gray-50 rounded p-2 space-y-0.5">
+                    {viewBug.expected_result.split('\n').filter(Boolean).map((item, i) => (
+                      <li key={i}>{item.replace(/^\d+[.)\s]*/, '')}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {viewBug.actual_result && (
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Actual</p>
+                  <ul className="list-disc list-inside text-sm text-gray-900 bg-gray-50 rounded p-2 space-y-0.5">
+                    {viewBug.actual_result.split('\n').filter(Boolean).map((item, i) => (
+                      <li key={i}>{item.replace(/^\d+[.)\s]*/, '')}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

@@ -242,6 +242,9 @@ class AzureDevOpsClient:
                 if attachments:
                     attachment_errors = await self._upload_and_link_attachment(client, int(external_id), attachments, work_item_base_url)
 
+                if duplicate_of_external_ids and len(duplicate_of_external_ids) > 0:
+                    await self._add_work_item_tag(client, int(external_id), "Justified", work_item_base_url)
+
                 result_dict = {
                     "success": True,
                     "external_id": str(external_id),
@@ -382,43 +385,36 @@ class AzureDevOpsClient:
         return errors
     
     async def _add_work_item_tag(self, client: httpx.AsyncClient, work_item_id: int, tag: str, base_url: str = None) -> None:
-        """Add a tag to the work item"""
+        """Add a tag to the work item using its own HTTP client."""
         target_base = base_url or self.base_url
+        patch_url = f"{target_base}/_apis/wit/workitems/{work_item_id}?api-version=7.0"
+        patch_fields = [
+            {"op": "add", "path": "/fields/System.Tags", "value": tag}
+        ]
         try:
-            # Get current tags
-            get_url = f"{target_base}/_apis/wit/workitems/{work_item_id}?fields=System.Tags&api-version=7.0"
-            response = await client.get(get_url, headers=self._get_headers(), timeout=10.0)
+            async with httpx.AsyncClient() as tag_client:
+                # First get current tags (with clean headers, no Content-Type)
+                auth_token = base64.b64encode(f":{self.pat}".encode()).decode()
+                clean_headers = {"Authorization": f"Basic {auth_token}"}
+                get_url = f"{target_base}/_apis/wit/workitems/{work_item_id}?fields=System.Tags&api-version=7.0"
+                get_resp = await tag_client.get(get_url, headers=clean_headers, timeout=10.0)
 
-            if response.status_code == 200:
-                data = response.json()
-                current_tags = data.get("fields", {}).get("System.Tags", "")
+                if get_resp.status_code == 200:
+                    current = get_resp.json().get("fields", {}).get("System.Tags", "")
+                    if current:
+                        patch_fields[0]["value"] = f"{current};{tag}"
 
-                # Append new tag
-                if current_tags:
-                    new_tags = f"{current_tags};{tag}"
-                else:
-                    new_tags = tag
-
-                # Update tags
-                patch_url = f"{target_base}/_apis/wit/workitems/{work_item_id}?api-version=7.0"
-                patch_fields = [
-                    {"op": "add", "path": "/fields/System.Tags", "value": new_tags}
-                ]
-                patch_response = await client.patch(
-                    patch_url,
-                    json=patch_fields,
-                    headers=self._get_headers(),
-                    timeout=10.0,
+                # Now set the tag
+                patch_resp = await tag_client.patch(
+                    patch_url, json=patch_fields,
+                    headers=self._get_headers(), timeout=10.0
                 )
-
-                if patch_response.status_code in [200, 201]:
-                    print(f"Added tag '{tag}' to work item {work_item_id}")
+                if patch_resp.status_code in (200, 201):
+                    print(f"Tag '{tag}' added to work item {work_item_id}")
                 else:
-                    print(f"Failed to add tag: {patch_response.status_code}")
-            else:
-                print(f"Failed to get work item tags: {response.status_code}")
+                    print(f"Tag add FAILED: {patch_resp.status_code} {patch_resp.text[:300]}")
         except Exception as e:
-            print(f"Error adding tag: {e}")
+            print(f"Tag add ERROR: {e}")
     
     async def get_work_items(self, states: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Get existing work items for duplicate detection"""
