@@ -9,7 +9,7 @@ import hashlib
 import secrets
 import jwt
 
-from app.core.database import get_db, User
+from app.core.database import get_db, User, SystemSetting
 from app.core.config import settings
 from app.services.audit_service import log_audit
 
@@ -589,3 +589,31 @@ async def reset_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid reset token"
         )
+
+
+@router.get("/session-timeout")
+async def get_client_session_timeout(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the active session timeout configuration (requires valid authentication token)."""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+    
+    token_data = decode_token(credentials.credentials)
+    if not token_data:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+        
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == "session_timeout"))
+    setting = result.scalar_one_or_none()
+    
+    if not setting or not setting.value:
+        return {"hours": 2, "minutes": 0}
+        
+    return setting.value

@@ -176,7 +176,7 @@ class SyncService:
         db.add(bug)
         await db.flush()
 
-        embedding = generate_embedding(f"{title} {description}")
+        embedding = generate_embedding(f"{title} {description} {bug.repro_steps or ''}".strip())
         if embedding and len(embedding) >= 384:
             db.add(BugEmbedding(bug_id=bug.id, embedding=embedding))
 
@@ -276,7 +276,7 @@ class SyncService:
                     "assigned_to": bug.assigned_to,
                 }))
 
-            embedding = generate_embedding(f"{bug.title} {bug.description}")
+            embedding = generate_embedding(f"{bug.title} {bug.description} {bug.repro_steps or ''}".strip())
             if embedding and len(embedding) >= 384:
                 await db.execute(
                     text("DELETE FROM bug_embeddings WHERE bug_id = :bid"),

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { adminApi, AdminUser, AdminDashboardStats, AdminSyncStatus, auditApi, AuditLogEntry, integrationApi, projectApi, Project } from '../services/api';
 import Card from '../components/Card';
 import toast from 'react-hot-toast';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Clock } from 'lucide-react';
 
 type Tab = 'dashboard' | 'users' | 'integrations' | 'projects' | 'sync' | 'audit';
 
@@ -40,6 +40,10 @@ export default function AdminPage() {
   const [integrations, setIntegrations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [timeoutHours, setTimeoutHours] = useState(2);
+  const [timeoutMinutes, setTimeoutMinutes] = useState(0);
+  const [isSavingTimeout, setIsSavingTimeout] = useState(false);
+  const [activeLimitLabel, setActiveLimitLabel] = useState('2h 0m');
   const [formData, setFormData] = useState({
     tool_type: 'azure_devops',
     name: '',
@@ -104,8 +108,15 @@ export default function AdminPage() {
     setLoading(true);
     try {
       if (activeTab === 'dashboard') {
-        const res = await adminApi.getDashboardStats();
-        setStats(res.data);
+        const [statsRes, timeoutRes] = await Promise.all([
+          adminApi.getDashboardStats(),
+          adminApi.getSessionTimeout()
+        ]);
+        setStats(statsRes.data);
+        const { hours, minutes } = timeoutRes.data;
+        setTimeoutHours(hours);
+        setTimeoutMinutes(minutes);
+        setActiveLimitLabel(`${hours}h ${minutes}m`);
       } else if (activeTab === 'users') {
         const res = await adminApi.listUsers();
         setUsers(res.data);
@@ -148,6 +159,40 @@ export default function AdminPage() {
       fetchData();
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Failed to update user status');
+    }
+  };
+
+  const handleSaveTimeout = async () => {
+    const totalMinutes = timeoutHours * 60 + timeoutMinutes;
+    if (totalMinutes < 1) {
+      toast.error('Session timeout must be at least 1 minute.');
+      return;
+    }
+    setIsSavingTimeout(true);
+    try {
+      await adminApi.updateSessionTimeout(timeoutHours, timeoutMinutes);
+      setActiveLimitLabel(`${timeoutHours}h ${timeoutMinutes}m`);
+      toast.success('Session timeout updated successfully');
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to update session timeout');
+    } finally {
+      setIsSavingTimeout(false);
+    }
+  };
+
+  const handleResetTimeout = async () => {
+    if (!window.confirm('Reset session timeout to default (2 hours)?')) return;
+    setIsSavingTimeout(true);
+    try {
+      await adminApi.resetSessionTimeout();
+      setTimeoutHours(2);
+      setTimeoutMinutes(0);
+      setActiveLimitLabel('2h 0m');
+      toast.success('Session timeout reset to default');
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Failed to reset session timeout');
+    } finally {
+      setIsSavingTimeout(false);
     }
   };
 
@@ -353,21 +398,88 @@ export default function AdminPage() {
   const renderDashboard = () => {
     if (!stats) return <p className="text-text-muted">Loading...</p>;
     return (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="p-4">
-          <h3 className="text-sm font-medium text-text-muted">Total Users</h3>
-          <p className="text-3xl font-bold text-text-primary mt-2">{stats.total_users}</p>
-          <p className="text-sm text-text-muted mt-1">{stats.active_users} active</p>
-        </Card>
-        <Card className="p-4">
-          <h3 className="text-sm font-medium text-text-muted">Total Bugs</h3>
-          <p className="text-3xl font-bold text-text-primary mt-2">{stats.total_bugs}</p>
-          <p className="text-sm text-text-muted mt-1">{stats.open_bugs} open, {stats.closed_bugs} closed</p>
-        </Card>
-        <Card className="p-4">
-          <h3 className="text-sm font-medium text-text-muted">Synced Bugs</h3>
-          <p className="text-3xl font-bold text-text-primary mt-2">{stats.synced_bugs}</p>
-          <p className="text-sm text-text-muted mt-1">From Azure DevOps</p>
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Card className="p-4">
+            <h3 className="text-sm font-medium text-text-muted">Total Users</h3>
+            <p className="text-3xl font-bold text-text-primary mt-2">{stats.total_users}</p>
+            <p className="text-sm text-text-muted mt-1">{stats.active_users} active</p>
+          </Card>
+          <Card className="p-4">
+            <h3 className="text-sm font-medium text-text-muted">Total Bugs</h3>
+            <p className="text-3xl font-bold text-text-primary mt-2">{stats.total_bugs}</p>
+            <p className="text-sm text-text-muted mt-1">{stats.open_bugs} open, {stats.closed_bugs} closed</p>
+          </Card>
+          <Card className="p-4">
+            <h3 className="text-sm font-medium text-text-muted">Synced Bugs</h3>
+            <p className="text-3xl font-bold text-text-primary mt-2">{stats.synced_bugs}</p>
+            <p className="text-sm text-text-muted mt-1">From Azure DevOps</p>
+          </Card>
+        </div>
+
+        <Card className="p-6">
+          <div className="flex items-center gap-3 mb-6 pb-4 border-b border-border">
+            <div className="p-2 bg-primary-50 rounded-lg text-primary-600">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-text-primary">Session Timeout Settings</h2>
+              <p className="text-sm text-text-secondary">Configure the system-wide inactivity timeout limit for user sessions.</p>
+            </div>
+          </div>
+
+          <div className="max-w-xl space-y-4">
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <label className="section-label">Hours</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="24"
+                  value={timeoutHours}
+                  onChange={(e) => setTimeoutHours(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="input-field mt-1"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="section-label">Minutes</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={timeoutMinutes}
+                  onChange={(e) => setTimeoutMinutes(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="input-field mt-1"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-sm text-text-muted bg-surface-secondary p-3 rounded-lg">
+              <span className="font-semibold text-text-secondary">Current Active Limit:</span>
+              <span className="bg-primary-100 text-primary-800 px-2 py-0.5 rounded text-xs font-semibold">
+                {activeLimitLabel}
+              </span>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={handleSaveTimeout}
+                disabled={isSavingTimeout}
+                className="btn-primary"
+              >
+                {isSavingTimeout ? 'Saving...' : 'Save Settings'}
+              </button>
+              <button
+                onClick={handleResetTimeout}
+                disabled={isSavingTimeout}
+                className="btn-secondary font-medium"
+              >
+                Reset to Default (2h)
+              </button>
+            </div>
+          </div>
         </Card>
       </div>
     );
@@ -865,6 +977,8 @@ export default function AdminPage() {
     'admin.create_project': 'Created Project',
     'admin.update_project': 'Updated Project',
     'admin.delete_project': 'Deleted Project',
+    'admin.update_session_timeout': 'Updated Session Timeout',
+    'admin.reset_session_timeout': 'Reset Session Timeout',
   };
 
   const actionColors: Record<string, string> = {
@@ -881,6 +995,8 @@ export default function AdminPage() {
     'admin.create_project': 'bg-teal-100 text-teal-800',
     'admin.update_project': 'bg-teal-100 text-teal-800',
     'admin.delete_project': 'bg-red-100 text-red-800',
+    'admin.update_session_timeout': 'bg-orange-100 text-orange-800',
+    'admin.reset_session_timeout': 'bg-orange-100 text-orange-800',
   };
 
   function getActionLabel(action: string): string {

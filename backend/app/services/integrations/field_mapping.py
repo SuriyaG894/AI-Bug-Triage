@@ -39,9 +39,51 @@ LOCAL_PRIORITY_TO_ADO = {
 def strip_html(text: str) -> str:
     if not text:
         return ""
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    from html.parser import HTMLParser
+    
+    class SafeHTMLParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.allowed_tags = {"b", "strong", "ul", "ol", "li", "em", "u", "p", "br", "span", "div", "a", "i"}
+            self.result = []
+            self.ignore_content = False
+            self.ignore_tags = {"script", "style"}
+
+        def handle_starttag(self, tag, attrs):
+            if tag in self.ignore_tags:
+                self.ignore_content = True
+            elif tag in self.allowed_tags:
+                attr_str = ""
+                if tag == "a" and attrs:
+                    href_attrs = [f'{k}="{v}"' for k, v in attrs if k == "href"]
+                    if href_attrs:
+                        attr_str = " " + href_attrs[0]
+                self.result.append(f"<{tag}{attr_str}>")
+
+        def handle_endtag(self, tag):
+            if tag in self.ignore_tags:
+                self.ignore_content = False
+            elif tag in self.allowed_tags:
+                self.result.append(f"</{tag}>")
+
+        def handle_data(self, data):
+            if not self.ignore_content:
+                self.result.append(data)
+
+        def handle_startendtag(self, tag, attrs):
+            if tag == "br" and tag in self.allowed_tags:
+                self.result.append("<br/>")
+
+        def get_content(self):
+            return "".join(self.result)
+
+    parser = SafeHTMLParser()
+    parser.feed(text)
+    # Collapse multiple whitespaces but keep HTML structure intact
+    content = parser.get_content()
+    import re
+    content = re.sub(r"[ \t]+", " ", content).strip()
+    return content
 
 
 def extract_ado_timestamp(ado_datestr: Optional[str]) -> Optional[datetime]:
@@ -68,6 +110,129 @@ def map_ado_severity_to_local(ado_severity: Optional[str]) -> str:
     return ADO_SEVERITY_TO_LOCAL.get(ado_severity, "medium")
 
 
+from html.parser import HTMLParser
+
+VOID_ELEMENTS = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
+
+class Node:
+    def __init__(self, tag=None, attrs=None):
+        self.tag = tag
+        self.attrs = attrs or {}
+        self.children = []
+
+class HTMLTreeParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = Node("root")
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        node = Node(tag, attrs_dict)
+        self.stack[-1].children.append(node)
+        if tag not in VOID_ELEMENTS:
+            self.stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        node = Node(tag, attrs_dict)
+        self.stack[-1].children.append(node)
+
+    def handle_endtag(self, tag):
+        if tag in VOID_ELEMENTS:
+            return
+        for i in range(len(self.stack) - 1, -1, -1):
+            if self.stack[i].tag == tag:
+                while len(self.stack) > i:
+                    self.stack.pop()
+                break
+
+    def handle_data(self, data):
+        if data:
+            self.stack[-1].children.append(data)
+
+def serialize(node):
+    if isinstance(node, str):
+        return node
+    
+    attrs_str = ""
+    for k, v in node.attrs.items():
+        attrs_str += f' {k}="{v}"'
+        
+    tag = node.tag
+    if tag == "root":
+        return "".join(serialize(c) for c in node.children)
+        
+    if tag in VOID_ELEMENTS:
+        return f"<{tag}{attrs_str} />"
+        
+    children_str = "".join(serialize(c) for c in node.children)
+    return f"<{tag}{attrs_str}>{children_str}</{tag}>"
+
+def get_node_text(node):
+    if isinstance(node, str):
+        return node
+    return "".join(get_node_text(c) for c in node.children)
+
+def is_header_node(node):
+    if not isinstance(node, Node):
+        return False
+        
+    if node.tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        return True
+        
+    text = get_node_text(node).strip()
+    if not text or len(text) > 40:
+        return False
+        
+    if node.tag in ("b", "strong", "u", "span"):
+        return True
+        
+    if node.tag in ("p", "div"):
+        non_empty_children = [c for c in node.children if not (isinstance(c, str) and not c.strip())]
+        if len(non_empty_children) == 1:
+            child = non_empty_children[0]
+            if isinstance(child, Node) and child.tag in ("b", "strong", "u", "span"):
+                return True
+        elif len(non_empty_children) == 0:
+            return True
+            
+    return False
+
+def identify_section(text: str) -> Optional[str]:
+    text_clean = re.sub(r'[^a-zA-Z0-9\s]', '', text).strip().lower()
+    
+    if text_clean in ("description", "desc"):
+        return "description"
+        
+    if any(p in text_clean for p in ("steps to reproduce", "repro steps", "steps", "reproduction steps", "how to reproduce")):
+        return "repro_steps"
+        
+    if any(p in text_clean for p in ("expected result", "expected behavior", "expected state", "expected")):
+        return "expected_result"
+        
+    if any(p in text_clean for p in ("actual result", "actual behavior", "actual state", "actual", "observed result", "observed behavior")):
+        return "actual_result"
+        
+    if "justification" in text_clean:
+        return "duplicate_justification"
+        
+    return None
+
+def is_metadata_table(node):
+    if not isinstance(node, Node) or node.tag != "table":
+        return False
+    text = get_node_text(node).strip()
+    return "Priority:" in text or "Severity:" in text
+
+def has_header_descendant(node):
+    if not isinstance(node, Node):
+        return False
+    for child in node.children:
+        if is_header_node(child) or has_header_descendant(child):
+            return True
+    return False
+
 def parse_ado_description(html: str) -> Dict[str, str]:
     sections = {
         "description": "",
@@ -79,31 +244,49 @@ def parse_ado_description(html: str) -> Dict[str, str]:
     if not html:
         return sections
         
-    parts = re.split(r'<h3>(.*?)</h3>', html, flags=re.IGNORECASE)
-    if len(parts) == 1:
+    parser = HTMLTreeParser()
+    try:
+        parser.feed(html)
+        root = parser.root
+        
+        active_root = root
+        while len(active_root.children) == 1 and isinstance(active_root.children[0], Node):
+            child = active_root.children[0]
+            if is_header_node(child):
+                break
+            if not has_header_descendant(child):
+                break
+            active_root = child
+            
+        current_section = "description"
+        sections_content = {
+            "description": [],
+            "expected_result": [],
+            "actual_result": [],
+            "repro_steps": [],
+            "duplicate_justification": [],
+        }
+        
+        for child in active_root.children:
+            if is_metadata_table(child):
+                continue
+                
+            if isinstance(child, Node):
+                if is_header_node(child):
+                    text_content = get_node_text(child).strip()
+                    sec = identify_section(text_content)
+                    if sec:
+                        current_section = sec
+                        continue
+            
+            sections_content[current_section].append(child)
+            
+        for k, v in sections_content.items():
+            sections[k] = "".join(serialize(c) for c in v).strip()
+            
+    except Exception:
         sections["description"] = html
-        return sections
         
-    if parts[0].strip():
-        sections["description"] = parts[0].strip()
-        
-    for i in range(1, len(parts), 2):
-        header = parts[i].strip().lower()
-        content = parts[i+1] if i+1 < len(parts) else ""
-        if "<table>" in content:
-            content = content.split("<table>")[0]
-            
-        if "description" in header:
-            sections["description"] = content.strip()
-        elif "expected result" in header:
-            sections["expected_result"] = content.strip()
-        elif "actual result" in header:
-            sections["actual_result"] = content.strip()
-        elif "steps to reproduce" in header:
-            sections["repro_steps"] = content.strip()
-        elif "justification" in header:
-            sections["duplicate_justification"] = content.strip()
-            
     return sections
 
 
@@ -120,6 +303,10 @@ def ado_to_local(fields: Dict[str, Any]) -> Dict[str, Any]:
         result["actual_result"] = strip_html(parsed["actual_result"]) if parsed["actual_result"] and parsed["actual_result"] != "<p>Not provided</p>" else None
         result["repro_steps"] = strip_html(parsed["repro_steps"]) if parsed["repro_steps"] and parsed["repro_steps"] != "<p>Not provided</p>" else None
         result["duplicate_justification"] = strip_html(parsed["duplicate_justification"]) if parsed["duplicate_justification"] and parsed["duplicate_justification"] != "<p>Not provided</p>" else None
+
+    if "Microsoft.VSTS.TCM.ReproSteps" in fields:
+        if not result.get("repro_steps"):
+            result["repro_steps"] = strip_html(fields["Microsoft.VSTS.TCM.ReproSteps"])
 
     if "System.State" in fields:
         result["status"] = map_ado_state_to_local(fields["System.State"])

@@ -11,6 +11,7 @@ export default function BugListPage() {
   const { user } = useAuth();
   const [bugs, setBugs] = useState<Bug[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [filters, setFilters] = useState({
     severity: '',
@@ -18,6 +19,7 @@ export default function BugListPage() {
     status: '',
     search: '',
   });
+  const [searchQuery, setSearchQuery] = useState(filters.search);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [deleteBug, setDeleteBug] = useState<Bug | null>(null);
@@ -29,6 +31,16 @@ export default function BugListPage() {
       setProjects(res.data);
     }).catch(() => {}).finally(() => setProjectsLoading(false));
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilters(prev => {
+        if (prev.search === searchQuery) return prev;
+        return { ...prev, search: searchQuery };
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!projectsLoading) {
@@ -49,6 +61,7 @@ export default function BugListPage() {
       console.error('Error fetching bugs:', error);
     } finally {
       setLoading(false);
+      setIsInitialLoading(false);
     }
   };
 
@@ -169,7 +182,7 @@ export default function BugListPage() {
     },
   ];
 
-  if (loading) {
+  if (isInitialLoading) {
     return (
       <div className="space-y-6">
         <div className="flex justify-between items-center">
@@ -246,8 +259,8 @@ export default function BugListPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
               <input
                 type="text"
-                value={filters.search}
-                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
                 className="input-field"
                 placeholder="Search bugs..."
               />
@@ -299,7 +312,15 @@ export default function BugListPage() {
       </Card>
 
       {/* Bug Table */}
-      <Card>
+      <Card className="relative overflow-hidden">
+        {loading && (
+          <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center z-10">
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
+              <span className="text-xs text-gray-500 font-medium animate-pulse">Fetching bugs...</span>
+            </div>
+          </div>
+        )}
         {hasNoAssignments ? (
           <div className="py-16 text-center">
             <FolderGit2 className="w-12 h-12 text-gray-300 mx-auto mb-4" />

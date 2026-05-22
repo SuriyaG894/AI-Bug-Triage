@@ -5,3 +5,4 @@ export { default as ConfirmDialog } from './ConfirmDialog';
 export { default as EmptyState } from './EmptyState';
 export { default as Modal } from './Modal';
 export { default as Skeleton } from './Skeleton';
+export { default as SessionTimeoutHandler } from './SessionTimeoutHandler';

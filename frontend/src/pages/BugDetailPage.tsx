@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { Badge, Card, Modal, Skeleton } from '../components';
 import { ArrowLeft, ExternalLink, Loader2, CheckCircle, XCircle, Brain, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
+import DOMPurify from 'dompurify';
 
 export default function BugDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -16,6 +17,21 @@ export default function BugDetailPage() {
   const [pushing, setPushing] = useState(false);
   const [pushResult, setPushResult] = useState<PushBugResponse | null>(null);
   const [showPushModal, setShowPushModal] = useState(false);
+
+  const renderFormattedContent = (content: string | undefined | null) => {
+    if (!content) return null;
+    const isHtml = /<[a-zA-Z]+[^>]*>/.test(content);
+    if (isHtml) {
+      const cleanHtml = DOMPurify.sanitize(content);
+      return (
+        <div 
+          className="rich-content text-gray-700"
+          dangerouslySetInnerHTML={{ __html: cleanHtml }}
+        />
+      );
+    }
+    return <p className="text-gray-700 whitespace-pre-wrap">{content}</p>;
+  };
 
   useEffect(() => {
     if (id) {
@@ -121,34 +137,34 @@ export default function BugDetailPage() {
         <div className="lg:col-span-2 space-y-6">
           <Card>
             <h2 className="text-lg font-semibold mb-4">Description</h2>
-            <p className="text-gray-700 whitespace-pre-wrap">{bug.description}</p>
+            {renderFormattedContent(bug.description)}
           </Card>
 
           {bug.repro_steps && (
             <Card>
               <h2 className="text-lg font-semibold mb-4">Steps to Reproduce</h2>
-              <p className="text-gray-700 whitespace-pre-wrap">{bug.repro_steps}</p>
+              {renderFormattedContent(bug.repro_steps)}
             </Card>
           )}
 
           {bug.expected_result && (
             <Card>
               <h2 className="text-lg font-semibold mb-4">Expected Result</h2>
-              <p className="text-gray-700 whitespace-pre-wrap">{bug.expected_result}</p>
+              {renderFormattedContent(bug.expected_result)}
             </Card>
           )}
 
           {bug.actual_result && (
             <Card>
               <h2 className="text-lg font-semibold mb-4">Actual Result</h2>
-              <p className="text-gray-700 whitespace-pre-wrap">{bug.actual_result}</p>
+              {renderFormattedContent(bug.actual_result)}
             </Card>
           )}
 
           {bug.duplicate_justification && (
             <Card className="bg-orange-50 border-orange-200">
               <h2 className="text-lg font-semibold text-orange-800 mb-4">Duplicate Justification</h2>
-              <p className="text-gray-700 whitespace-pre-wrap">{bug.duplicate_justification}</p>
+              {renderFormattedContent(bug.duplicate_justification)}
               {bug.duplicate_of_external_ids && bug.duplicate_of_external_ids.length > 0 && (
                 <div className="mt-4">
                   <p className="text-sm font-medium text-gray-500 mb-2">Matched ADO Bugs:</p>

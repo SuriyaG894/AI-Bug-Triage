@@ -1,11 +1,30 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import { useForm, Controller } from 'react-hook-form';
 import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi, projectApi, Project, Bug } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Badge, Card, Modal } from '../components';
 import { ArrowLeft, Loader2, Brain, AlertTriangle, Paperclip, X, ExternalLink, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
+import ReactQuill from 'react-quill';
+import DOMPurify from 'dompurify';
+import 'react-quill/dist/quill.snow.css';
+
+const quillModules = {
+  toolbar: [
+    ['bold', 'italic', 'underline', 'strike'],
+    [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+    [{ 'indent': '-1'}, { 'indent': '+1' }],
+    ['clean']
+  ],
+};
+
+const quillFormats = [
+  'bold', 'italic', 'underline', 'strike',
+  'list', 'bullet',
+  'indent'
+];
+
 
 interface BugEditInputs {
   title: string;
@@ -30,6 +49,45 @@ export default function BugEditPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const renderModalFieldContent = (content: string | undefined | null) => {
+    if (!content) return null;
+    const isHtml = /<[a-zA-Z]+[^>]*>/.test(content);
+    if (isHtml) {
+      const cleanHtml = DOMPurify.sanitize(content);
+      return (
+        <div 
+          className="rich-content text-sm text-gray-900 bg-gray-50 rounded p-2"
+          dangerouslySetInnerHTML={{ __html: cleanHtml }}
+        />
+      );
+    }
+    return (
+      <ul className="list-disc list-inside text-sm text-gray-900 bg-gray-50 rounded p-2 space-y-0.5">
+        {content.split('\n').filter(Boolean).map((item, i) => (
+          <li key={i}>{item.replace(/^\d+[.)\s]*/, '')}</li>
+        ))}
+      </ul>
+    );
+  };
+
+  const renderModalDescriptionContent = (content: string | undefined | null) => {
+    if (!content) return null;
+    const isHtml = /<[a-zA-Z]+[^>]*>/.test(content);
+    if (isHtml) {
+      const cleanHtml = DOMPurify.sanitize(content);
+      return (
+        <div 
+          className="rich-content text-sm text-gray-900 bg-gray-50 rounded p-2"
+          dangerouslySetInnerHTML={{ __html: cleanHtml }}
+        />
+      );
+    }
+    return (
+      <div className="text-sm text-gray-900 bg-gray-50 rounded p-2 whitespace-pre-wrap">
+        {content}
+      </div>
+    );
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
@@ -98,6 +156,7 @@ export default function BugEditPage() {
     watch,
     setValue,
     reset,
+    control,
     formState: { errors },
   } = useForm<BugEditInputs>({
     defaultValues: {
@@ -106,6 +165,7 @@ export default function BugEditPage() {
       type: 'general',
       status: 'open',
       assigned_to: '',
+      repro_steps: '',
       expected_result: '',
       actual_result: '',
     }
@@ -404,15 +464,32 @@ export default function BugEditPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Steps to Reproduce <span className="text-red-500">*</span>
               </label>
-              <textarea
-                {...register('repro_steps', {
+              <Controller
+                name="repro_steps"
+                control={control}
+                rules={{
                   required: 'Reproduction steps are required',
-                  minLength: { value: 20, message: 'Please provide detailed steps (at least 20 characters)' }
-                })}
-                className="input-field"
-                rows={4}
-                placeholder="1. Go to login page\n2. Enter valid credentials\n3. Click login button"
-                onBlur={checkDuplicate}
+                  validate: {
+                    minLength: (v) => {
+                      const text = v ? v.replace(/<[^>]*>/g, '').trim() : '';
+                      return text.length >= 20 || 'Please provide detailed steps (at least 20 characters)';
+                    }
+                  }
+                }}
+                render={({ field }) => (
+                  <ReactQuill
+                    theme="snow"
+                    modules={quillModules}
+                    formats={quillFormats}
+                    value={field.value}
+                    onChange={field.onChange}
+                    onBlur={() => {
+                      field.onBlur();
+                      checkDuplicate();
+                    }}
+                    placeholder="Enter steps to reproduce..."
+                  />
+                )}
               />
               {errors.repro_steps && (
                 <p className="mt-1 text-sm text-red-600">{errors.repro_steps.message}</p>
@@ -424,14 +501,29 @@ export default function BugEditPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Expected Result <span className="text-red-500">*</span>
                 </label>
-                <textarea
-                  {...register('expected_result', {
+                <Controller
+                  name="expected_result"
+                  control={control}
+                  rules={{
                     required: 'Expected result is required',
-                    minLength: { value: 10, message: 'At least 10 characters' }
-                  })}
-                  className="input-field"
-                  rows={3}
-                  placeholder="What should happen?"
+                    validate: {
+                      minLength: (v) => {
+                        const text = v ? v.replace(/<[^>]*>/g, '').trim() : '';
+                        return text.length >= 10 || 'At least 10 characters';
+                      }
+                    }
+                  }}
+                  render={({ field }) => (
+                    <ReactQuill
+                      theme="snow"
+                      modules={quillModules}
+                      formats={quillFormats}
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      placeholder="What should happen?"
+                    />
+                  )}
                 />
                 {errors.expected_result && (
                   <p className="mt-1 text-sm text-red-600">{errors.expected_result.message}</p>
@@ -442,14 +534,29 @@ export default function BugEditPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Actual Result <span className="text-red-500">*</span>
                 </label>
-                <textarea
-                  {...register('actual_result', {
+                <Controller
+                  name="actual_result"
+                  control={control}
+                  rules={{
                     required: 'Actual result is required',
-                    minLength: { value: 10, message: 'At least 10 characters' }
-                  })}
-                  className="input-field"
-                  rows={3}
-                  placeholder="What actually happened?"
+                    validate: {
+                      minLength: (v) => {
+                        const text = v ? v.replace(/<[^>]*>/g, '').trim() : '';
+                        return text.length >= 10 || 'At least 10 characters';
+                      }
+                    }
+                  }}
+                  render={({ field }) => (
+                    <ReactQuill
+                      theme="snow"
+                      modules={quillModules}
+                      formats={quillFormats}
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      placeholder="What actually happened?"
+                    />
+                  )}
                 />
                 {errors.actual_result && (
                   <p className="mt-1 text-sm text-red-600">{errors.actual_result.message}</p>
@@ -869,17 +976,13 @@ export default function BugEditPage() {
 
             <div>
               <p className="text-xs text-gray-400 mb-1">Description</p>
-              <div className="text-sm text-gray-900 bg-gray-50 rounded p-2 whitespace-pre-wrap">{viewBug.description}</div>
+              {renderModalDescriptionContent(viewBug.description)}
             </div>
 
             {viewBug.repro_steps && (
               <div>
                 <p className="text-xs text-gray-400 mb-1">Repro Steps</p>
-                <ul className="list-disc list-inside text-sm text-gray-900 bg-gray-50 rounded p-2 space-y-0.5">
-                  {viewBug.repro_steps.split('\n').filter(Boolean).map((step, i) => (
-                    <li key={i}>{step.replace(/^\d+[.)\s]*/, '')}</li>
-                  ))}
-                </ul>
+                {renderModalFieldContent(viewBug.repro_steps)}
               </div>
             )}
 
@@ -887,21 +990,13 @@ export default function BugEditPage() {
               {viewBug.expected_result && (
                 <div>
                   <p className="text-xs text-gray-400 mb-1">Expected</p>
-                  <ul className="list-disc list-inside text-sm text-gray-900 bg-gray-50 rounded p-2 space-y-0.5">
-                    {viewBug.expected_result.split('\n').filter(Boolean).map((item, i) => (
-                      <li key={i}>{item.replace(/^\d+[.)\s]*/, '')}</li>
-                    ))}
-                  </ul>
+                  {renderModalFieldContent(viewBug.expected_result)}
                 </div>
               )}
               {viewBug.actual_result && (
                 <div>
                   <p className="text-xs text-gray-400 mb-1">Actual</p>
-                  <ul className="list-disc list-inside text-sm text-gray-900 bg-gray-50 rounded p-2 space-y-0.5">
-                    {viewBug.actual_result.split('\n').filter(Boolean).map((item, i) => (
-                      <li key={i}>{item.replace(/^\d+[.)\s]*/, '')}</li>
-                    ))}
-                  </ul>
+                  {renderModalFieldContent(viewBug.actual_result)}
                 </div>
               )}
             </div>

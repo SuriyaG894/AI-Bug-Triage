@@ -5,6 +5,183 @@ import httpx
 import os
 import uuid
 import urllib.parse
+import re
+from html.parser import HTMLParser
+import html
+
+VOID_ELEMENTS = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
+
+class Node:
+    def __init__(self, tag=None, attrs=None):
+        self.tag = tag
+        self.attrs = attrs or {}
+        self.children = []
+
+class HTMLTreeParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = Node("root")
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        node = Node(tag, attrs_dict)
+        self.stack[-1].children.append(node)
+        if tag not in VOID_ELEMENTS:
+            self.stack.append(node)
+
+    def handle_startendtag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        node = Node(tag, attrs_dict)
+        self.stack[-1].children.append(node)
+
+    def handle_endtag(self, tag):
+        if tag in VOID_ELEMENTS:
+            return
+        for i in range(len(self.stack) - 1, -1, -1):
+            if self.stack[i].tag == tag:
+                while len(self.stack) > i:
+                    self.stack.pop()
+                break
+
+    def handle_data(self, data):
+        if data:
+            self.stack[-1].children.append(data)
+
+def serialize(node):
+    if isinstance(node, str):
+        return html.escape(node)
+    
+    attrs_str = ""
+    for k, v in node.attrs.items():
+        attrs_str += f' {k}="{v}"'
+        
+    tag = node.tag
+    if tag == "root":
+        return "".join(serialize(c) for c in node.children)
+        
+    if tag in VOID_ELEMENTS:
+        return f"<{tag}{attrs_str} />"
+        
+    children_str = "".join(serialize(c) for c in node.children)
+    return f"<{tag}{attrs_str}>{children_str}</{tag}>"
+
+def get_indent_level(node):
+    if not isinstance(node, Node) or node.tag != "li":
+        return 0
+    class_attr = node.attrs.get("class", "")
+    m = re.search(r"ql-indent-(\d+)", class_attr)
+    if m:
+        return int(m.group(1))
+    return 0
+
+def remove_indent_class(node):
+    if not isinstance(node, Node):
+        return
+    class_attr = node.attrs.get("class", "")
+    if class_attr:
+        new_class = re.sub(r"\bql-indent-\d+\b", "", class_attr).strip()
+        if new_class:
+            node.attrs["class"] = new_class
+        else:
+            node.attrs.pop("class", None)
+
+def nest_li_group(list_tag, li_nodes):
+    if not li_nodes:
+        return []
+        
+    levels = [get_indent_level(node) for node in li_nodes]
+    
+    for node in li_nodes:
+        remove_indent_class(node)
+        
+    outer_list = Node(list_tag)
+    list_stack = [outer_list]
+    level_stack = [0]
+    
+    for node, lvl in zip(li_nodes, levels):
+        while lvl > level_stack[-1]:
+            sub_list = Node(list_tag)
+            parent_list = list_stack[-1]
+            last_li = None
+            for child in reversed(parent_list.children):
+                if isinstance(child, Node) and child.tag == "li":
+                    last_li = child
+                    break
+            if last_li:
+                last_li.children.append(sub_list)
+            else:
+                parent_list.children.append(sub_list)
+            level_stack.append(level_stack[-1] + 1)
+            list_stack.append(sub_list)
+            
+        while len(level_stack) > 1 and level_stack[-1] > lvl:
+            level_stack.pop()
+            list_stack.pop()
+            
+        list_stack[-1].children.append(node)
+        
+    return outer_list.children
+
+def process_tree(node):
+    if isinstance(node, str):
+        return node
+        
+    if node.tag in ("ul", "ol"):
+        node.children = [c for c in node.children if not (isinstance(c, str) and not c.strip())]
+        
+        new_children = []
+        li_group = []
+        for child in node.children:
+            if isinstance(child, Node) and child.tag == "li":
+                li_group.append(child)
+            else:
+                if li_group:
+                    new_children.extend(nest_li_group(node.tag, li_group))
+                    li_group = []
+                new_children.append(child)
+        if li_group:
+            new_children.extend(nest_li_group(node.tag, li_group))
+        node.children = new_children
+
+    node.children = [process_tree(c) for c in node.children]
+    
+    if node.tag != "li":
+        class_attr = node.attrs.get("class", "")
+        if class_attr:
+            m = re.search(r"\bql-indent-(\d+)\b", class_attr)
+            if m:
+                indent_level = int(m.group(1))
+                padding_style = f"padding-left: {indent_level * 3}em;"
+                existing_style = node.attrs.get("style", "")
+                if existing_style:
+                    if not existing_style.rstrip().endswith(";"):
+                        existing_style += ";"
+                    node.attrs["style"] = f"{existing_style} {padding_style}"
+                else:
+                    node.attrs["style"] = padding_style
+                
+                new_class = re.sub(r"\bql-indent-\d+\b", "", class_attr).strip()
+                if new_class:
+                    node.attrs["class"] = new_class
+                else:
+                    node.attrs.pop("class", None)
+
+    return node
+
+def convert_quill_lists_to_nested(html_str: str) -> str:
+    if not html_str:
+        return html_str
+    
+    parser = HTMLTreeParser()
+    try:
+        parser.feed(html_str)
+        root = parser.root
+        processed_root = process_tree(root)
+        return serialize(processed_root)
+    except Exception as e:
+        print(f"Error in convert_quill_lists_to_nested: {e}")
+        return html_str
 
 
 class AzureDevOpsClient:
@@ -37,6 +214,14 @@ class AzureDevOpsClient:
                 html += f'<li><a href="{att}">{att.split("/")[-1]}</a></li>'
         html += "</ul>"
         return html
+
+    def _format_html_field(self, content: Optional[str], default: str = "Not provided") -> str:
+        if not content:
+            return f"<p>{default}</p>"
+        import re
+        if bool(re.search(r"<[a-zA-Z]+[^>]*>", content)):
+            return convert_quill_lists_to_nested(content)
+        return f"<p>{content}</p>"
     
     async def create_work_item(self, title: str, description: str,
                                severity: str, bug_type: str,
@@ -66,30 +251,34 @@ class AzureDevOpsClient:
 
         repro_steps_formatted = ""
         if repro_steps:
-            steps = repro_steps.strip().split('\n')
-            repro_steps_formatted = "<ul>"
-            for step in steps:
-                step = step.strip()
-                if step:
-                    if step.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
-                        step = step[2:].strip()
-                    repro_steps_formatted += f"<li>{step}</li>"
-            repro_steps_formatted += "</ul>"
+            import re
+            if bool(re.search(r"<[a-zA-Z]+[^>]*>", repro_steps)):
+                repro_steps_formatted = convert_quill_lists_to_nested(repro_steps)
+            else:
+                steps = repro_steps.strip().split('\n')
+                repro_steps_formatted = "<ul>"
+                for step in steps:
+                    step = step.strip()
+                    if step:
+                        if step.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
+                            step = step[2:].strip()
+                        repro_steps_formatted += f"<li>{step}</li>"
+                repro_steps_formatted += "</ul>"
 
         justification_html = ""
         if duplicate_justification:
             justification_html = f"""
 <h3>Justification for Duplicate</h3>
-<p>{duplicate_justification}</p>"""
+{self._format_html_field(duplicate_justification)}"""
 
         full_description = f"""<h3>Description</h3>
-<p>{description}</p>
+{self._format_html_field(description, default='No description')}
 
 <h3>Expected Result</h3>
-<p>{expected_result or 'Not provided'}</p>
+{self._format_html_field(expected_result)}
 
 <h3>Actual Result</h3>
-<p>{actual_result or 'Not provided'}</p>
+{self._format_html_field(actual_result)}
 
 <h3>Steps to Reproduce</h3>
 {repro_steps_formatted or '<p>Not provided</p>'}
@@ -178,30 +367,34 @@ class AzureDevOpsClient:
 
         repro_steps_formatted = ""
         if repro_steps:
-            steps = repro_steps.strip().split('\n')
-            repro_steps_formatted = "<ul>"
-            for step in steps:
-                step = step.strip()
-                if step:
-                    if step.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
-                        step = step[2:].strip()
-                    repro_steps_formatted += f"<li>{step}</li>"
-            repro_steps_formatted += "</ul>"
+            import re
+            if bool(re.search(r"<[a-zA-Z]+[^>]*>", repro_steps)):
+                repro_steps_formatted = convert_quill_lists_to_nested(repro_steps)
+            else:
+                steps = repro_steps.strip().split('\n')
+                repro_steps_formatted = "<ul>"
+                for step in steps:
+                    step = step.strip()
+                    if step:
+                        if step.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')):
+                            step = step[2:].strip()
+                        repro_steps_formatted += f"<li>{step}</li>"
+                repro_steps_formatted += "</ul>"
 
         justification_html = ""
         if duplicate_justification:
             justification_html = f"""
 <h3>Justification for Duplicate</h3>
-<p>{duplicate_justification}</p>"""
+{self._format_html_field(duplicate_justification)}"""
 
         full_description = f"""<h3>Description</h3>
-<p>{description}</p>
+{self._format_html_field(description, default='No description')}
 
 <h3>Expected Result</h3>
-<p>{expected_result or 'Not provided'}</p>
+{self._format_html_field(expected_result)}
 
 <h3>Actual Result</h3>
-<p>{actual_result or 'Not provided'}</p>
+{self._format_html_field(actual_result)}
 
 <h3>Steps to Reproduce</h3>
 {repro_steps_formatted or '<p>Not provided</p>'}

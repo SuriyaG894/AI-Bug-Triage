@@ -58,7 +58,9 @@ class DuplicateCandidate:
 def normalize_text(text: Optional[str]) -> str:
     if not text:
         return ""
-    cleaned = re.sub(r"[^a-zA-Z0-9\s]", " ", text.lower())
+    # Strip HTML tags to prevent formatting keywords (b, li, ul, etc.) from polluting Jaccard index
+    text_clean = re.sub(r"<[^>]+>", " ", text)
+    cleaned = re.sub(r"[^a-zA-Z0-9\s]", " ", text_clean.lower())
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
@@ -236,13 +238,34 @@ def rank_duplicate_candidates(
 
     ranked.sort(key=lambda item: item[0], reverse=True)
 
-    similar_bugs: List[SimilarBug] = []
-    seen_keys: set[str] = set()
+    # Group candidates by their logical bug identity to avoid duplicate local vs ADO entries.
+    grouped: dict[str, Tuple[float, DuplicateCandidate]] = {}
     for similarity, candidate in ranked:
-        key = candidate.key()
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
+        if candidate.external_id:
+            logical_id = f"ext:{candidate.external_id}"
+        elif candidate.id is not None:
+            logical_id = f"local:{candidate.id}"
+        else:
+            logical_id = f"raw:{normalize_text(candidate.title)}"
+
+        if logical_id in grouped:
+            prev_sim, prev_cand = grouped[logical_id]
+            # Prefer source == "azure_devops" (ADO candidate) if available.
+            if candidate.source == "azure_devops" and prev_cand.source != "azure_devops":
+                keep_cand = candidate
+            elif prev_cand.source == "azure_devops" and candidate.source != "azure_devops":
+                keep_cand = prev_cand
+            else:
+                keep_cand = candidate if similarity > prev_sim else prev_cand
+            grouped[logical_id] = (max(prev_sim, similarity), keep_cand)
+        else:
+            grouped[logical_id] = (similarity, candidate)
+
+    # Sort the unique grouped candidates by similarity descending
+    unique_ranked = sorted(grouped.values(), key=lambda item: item[0], reverse=True)
+
+    similar_bugs: List[SimilarBug] = []
+    for similarity, candidate in unique_ranked:
         similar_bugs.append(_candidate_to_bug_response(candidate, similarity))
         if len(similar_bugs) >= max_results:
             break
@@ -341,19 +364,23 @@ async def _fetch_external_candidates(db: AsyncSession, request: DuplicateCheckRe
     result = await db.execute(query)
     rows = result.scalars().all()
 
+    from app.services.integrations.field_mapping import parse_ado_description
+
     candidates: List[DuplicateCandidate] = []
     for row in rows:
+        parsed = parse_ado_description(row.description or "")
         candidates.append(
             DuplicateCandidate(
                 id=None,
                 title=row.title or "",
-                description=row.description or "",
+                description=parsed.get("description") or "",
                 severity="",
                 type="azure_devops",
                 status="",
                 source="azure_devops",
                 embedding=coerce_embedding(row.embedding),
                 external_id=str(row.external_id),
+                repro_steps=parsed.get("repro_steps") or None,
             )
         )
 
@@ -426,17 +453,21 @@ async def _fetch_ado_direct_candidates(db: AsyncSession, request: DuplicateCheck
                 item_desc_raw = fields.get("System.Description", "") or ""
                 item_state = fields.get("System.State", "") or ""
 
+                from app.services.integrations.field_mapping import parse_ado_description
+
+                parsed = parse_ado_description(item_desc_raw)
                 candidates.append(
                     DuplicateCandidate(
                         id=None,
                         title=item_title,
-                        description=item_desc_raw,
+                        description=parsed.get("description") or "",
                         severity="",
                         type="",
                         status=item_state,
                         source="azure_devops",
                         external_id=str(item_id),
                         external_url=f"https://dev.azure.com/{org}/{project}/_workitems/edit/{item_id}",
+                        repro_steps=parsed.get("repro_steps") or None,
                     )
                 )
     except Exception:

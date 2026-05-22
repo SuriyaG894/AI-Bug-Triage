@@ -25,6 +25,10 @@ def generate_embedding(text: str) -> Optional[List[float]]:
     if not text or not text.strip():
         text = "unknown"
     
+    # Strip HTML tags to avoid semantic embedding distortion
+    import re
+    text = re.sub(r"<[^>]+>", " ", text)
+    
     model = get_model()
     if model is None:
         return None

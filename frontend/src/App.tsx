@@ -15,11 +15,13 @@ import AuditPage from './pages/AuditPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import NotificationsPage from './pages/NotificationsPage';
 import AboutPage from './pages/AboutPage';
+import { SessionTimeoutHandler } from './components';
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <SessionTimeoutHandler />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />

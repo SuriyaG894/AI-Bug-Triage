@@ -7,6 +7,7 @@ from app.core.database import (
     BugComment,
     SyncState,
     AuditLog,
+    SystemSetting,
 )
 
 __all__ = [
@@ -18,4 +19,6 @@ __all__ = [
     "BugComment",
     "SyncState",
     "AuditLog",
+    "SystemSetting",
 ]
+

@@ -296,6 +296,10 @@ export const adminApi = {
     api.post('/admin/integrations/test-credentials', data),
   
   testIntegration: (id: number) => api.post(`/admin/integrations/test/${id}`),
+
+  getSessionTimeout: () => api.get<{ hours: number; minutes: number }>('/admin/settings/session-timeout'),
+  updateSessionTimeout: (hours: number, minutes: number) => api.post('/admin/settings/session-timeout', { hours, minutes }),
+  resetSessionTimeout: () => api.post('/admin/settings/session-timeout/reset'),
 };
 
 export interface AuthUser {
@@ -322,6 +326,8 @@ export const authApi = {
   
   resetPassword: (reset_token: string, new_password: string) =>
     api.post('/auth/reset-password', { reset_token, new_password }),
+
+  getSessionTimeout: () => api.get<{ hours: number; minutes: number }>('/auth/session-timeout'),
 };
 
 export interface PasswordResetResponse {

@@ -11,7 +11,8 @@ from app.core.database import Base
 
 config = context.config
 
-if config.get_main_option("sqlalchemy.url") is None:
+db_url = config.get_main_option("sqlalchemy.url")
+if db_url is None or "driver://user:pass" in db_url:
     config.set_main_option(
         "sqlalchemy.url", settings.DATABASE_URL.replace("+asyncpg", "")
     )

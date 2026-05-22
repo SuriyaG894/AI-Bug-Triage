@@ -167,7 +167,7 @@ async def create_bug(
 
     if settings.groq_api_key_decrypted:
         try:
-            embedding = await generate_embedding(bug.description)
+            embedding = await generate_embedding(f"{bug.title} {bug.description} {bug.repro_steps or ''}".strip())
             if embedding and len(embedding) >= 384:
                 db.add(BugEmbedding(bug_id=new_bug.id, embedding=embedding))
                 await db.commit()
@@ -356,7 +356,7 @@ async def update_bug(
                 text("DELETE FROM bug_embeddings WHERE bug_id = :bid"),
                 {"bid": bug_id}
             )
-            embedding = await generate_embedding(bug.description)
+            embedding = await generate_embedding(f"{bug.title} {bug.description} {bug.repro_steps or ''}".strip())
             if embedding and len(embedding) >= 384:
                 db.add(BugEmbedding(bug_id=bug.id, embedding=embedding))
                 await db.commit()

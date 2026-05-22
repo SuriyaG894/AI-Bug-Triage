@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 import httpx
 
-from app.core.database import get_db, User, Bug, Integration, Project, UserProjectAssignment, AuditLog
+from app.core.database import get_db, User, Bug, Integration, Project, UserProjectAssignment, AuditLog, SystemSetting
 from app.api.routes.auth import require_admin, decode_token, get_current_user_optional
 from app.services.audit_service import log_audit
 
@@ -869,3 +869,88 @@ async def get_my_projects(
         {"id": p.id, "name": p.name, "ado_project_id": p.ado_project_id, "ado_project_name": p.ado_project_name}
         for p in projects
     ]
+
+
+# ============================================================================
+# Session Timeout Settings
+# ============================================================================
+
+class SessionTimeoutUpdate(BaseModel):
+    hours: int
+    minutes: int
+
+
+@router.get("/settings/session-timeout")
+async def get_session_timeout(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Get the system-wide session timeout setting (admin only)."""
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == "session_timeout"))
+    setting = result.scalar_one_or_none()
+    
+    if not setting or not setting.value:
+        return {"hours": 2, "minutes": 0}  # Default session timeout
+        
+    return setting.value
+
+
+@router.post("/settings/session-timeout")
+async def update_session_timeout(
+    data: SessionTimeoutUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Update the system-wide session timeout setting (admin only)."""
+    total_minutes = data.hours * 60 + data.minutes
+    if total_minutes < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session timeout must be at least 1 minute."
+        )
+        
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == "session_timeout"))
+    setting = result.scalar_one_or_none()
+    
+    old_value = setting.value if setting else {"hours": 2, "minutes": 0}
+    new_value = {"hours": data.hours, "minutes": data.minutes}
+    
+    if not setting:
+        setting = SystemSetting(key="session_timeout", value=new_value)
+        db.add(setting)
+    else:
+        setting.value = new_value
+        
+    await db.commit()
+    
+    await log_audit(
+        db, admin.id, admin.email, "admin.update_session_timeout",
+        entity_type="system_settings",
+        details={"old_value": old_value, "new_value": new_value}
+    )
+    
+    return {"message": "Session timeout updated successfully", "timeout": new_value}
+
+
+@router.post("/settings/session-timeout/reset")
+async def reset_session_timeout(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin)
+):
+    """Reset the system-wide session timeout to the default of 2 hours (admin only)."""
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == "session_timeout"))
+    setting = result.scalar_one_or_none()
+    
+    default_value = {"hours": 2, "minutes": 0}
+    
+    if setting:
+        await db.delete(setting)
+        await db.commit()
+        
+    await log_audit(
+        db, admin.id, admin.email, "admin.reset_session_timeout",
+        entity_type="system_settings",
+        details={"default_value": default_value}
+    )
+    
+    return {"message": "Session timeout reset to default", "timeout": default_value}
