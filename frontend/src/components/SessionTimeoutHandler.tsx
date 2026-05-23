@@ -73,17 +73,7 @@ export default function SessionTimeoutHandler() {
         }
       } else {
         // Count down
-        setCountdown(prev => {
-          if (prev <= 1) {
-            if (intervalRef.current) clearInterval(intervalRef.current);
-            setIsWarning(false);
-            isWarningRef.current = false;
-            toast.error('Session expired due to inactivity.');
-            logout();
-            return 0;
-          }
-          return prev - 1;
-        });
+        setCountdown(prev => prev - 1);
       }
     }, 1000);
 
@@ -94,7 +84,18 @@ export default function SessionTimeoutHandler() {
       });
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [user, token, timeoutMs, logout]);
+  }, [user, token, timeoutMs]);
+
+  // Handle session expiration side-effects when countdown reaches 0
+  useEffect(() => {
+    if (isWarning && countdown <= 0) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      setIsWarning(false);
+      isWarningRef.current = false;
+      toast.error('Session expired due to inactivity.');
+      logout();
+    }
+  }, [countdown, isWarning, logout]);
 
   const handleContinue = async () => {
     try {

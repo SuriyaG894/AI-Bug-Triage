@@ -233,6 +233,35 @@ def has_header_descendant(node):
             return True
     return False
 
+def is_section_header_node(node) -> bool:
+    if not isinstance(node, Node):
+        return False
+    if not is_header_node(node):
+        return False
+    text = get_node_text(node)
+    return identify_section(text) is not None
+
+def contains_section_header(node) -> bool:
+    if not isinstance(node, Node):
+        return False
+    if is_section_header_node(node):
+        return True
+    return any(contains_section_header(child) for child in node.children)
+
+def flatten_containers(nodes):
+    flat = []
+    for node in nodes:
+        if isinstance(node, Node):
+            if is_section_header_node(node):
+                flat.append(node)
+            elif node.tag in ("div", "p", "span") and any(contains_section_header(child) for child in node.children):
+                flat.extend(flatten_containers(node.children))
+            else:
+                flat.append(node)
+        else:
+            flat.append(node)
+    return flat
+
 def parse_ado_description(html: str) -> Dict[str, str]:
     sections = {
         "description": "",
@@ -249,14 +278,7 @@ def parse_ado_description(html: str) -> Dict[str, str]:
         parser.feed(html)
         root = parser.root
         
-        active_root = root
-        while len(active_root.children) == 1 and isinstance(active_root.children[0], Node):
-            child = active_root.children[0]
-            if is_header_node(child):
-                break
-            if not has_header_descendant(child):
-                break
-            active_root = child
+        flat_nodes = flatten_containers(root.children)
             
         current_section = "description"
         sections_content = {
@@ -267,12 +289,12 @@ def parse_ado_description(html: str) -> Dict[str, str]:
             "duplicate_justification": [],
         }
         
-        for child in active_root.children:
+        for child in flat_nodes:
             if is_metadata_table(child):
                 continue
                 
             if isinstance(child, Node):
-                if is_header_node(child):
+                if is_section_header_node(child):
                     text_content = get_node_text(child).strip()
                     sec = identify_section(text_content)
                     if sec:

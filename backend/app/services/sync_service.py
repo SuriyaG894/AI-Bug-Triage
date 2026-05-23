@@ -69,7 +69,7 @@ class SyncService:
                         print(f"Error syncing bug {item.get('id')}: {e}")
                         result["errors"] += 1
 
-                if result["synced"] > 0 or result["updated"] > 0:
+                if result["synced"] > 0 or result["updated"] > 0 or result["comments_synced"] > 0:
                     await db.commit()
                     for event in all_events:
                         await event_bus.publish(event)
@@ -157,6 +157,15 @@ class SyncService:
             fields.get("System.Description", "")
         ) or "Synced from ADO"
 
+        created_by_val = fields.get("System.CreatedBy")
+        creator_email = "system"
+        if isinstance(created_by_val, dict):
+            creator_email = created_by_val.get("uniqueName") or created_by_val.get("displayName") or "system"
+        elif created_by_val:
+            creator_email = str(created_by_val)
+
+        ado_changed_naive = ado_changed_date.replace(tzinfo=None) if ado_changed_date else None
+
         bug = Bug(
             title=title,
             description=description,
@@ -170,8 +179,8 @@ class SyncService:
             source="azure_devops",
             external_id=ext_id,
             assigned_to=mapped.get("assigned_to"),
-            last_external_updated_at=ado_changed_date,
-            created_by="system",
+            last_external_updated_at=ado_changed_naive,
+            created_by=creator_email,
         )
         db.add(bug)
         await db.flush()
@@ -184,7 +193,7 @@ class SyncService:
             bug_id=bug.id,
             external_id=ext_id,
             last_synced_at=datetime.utcnow(),
-            external_updated_at=ado_changed_date,
+            external_updated_at=ado_changed_naive,
             status="in_sync",
         )
         db.add(sync_state)
@@ -213,9 +222,13 @@ class SyncService:
             result["skipped"] += 1
             return events
 
+        # Force naive datetimes for comparison and database fields to prevent timezone mismatch errors
+        ado_changed_naive = ado_changed_date.replace(tzinfo=None)
+        last_ext_naive = bug.last_external_updated_at.replace(tzinfo=None) if bug.last_external_updated_at else None
+
         if (
-            bug.last_external_updated_at
-            and ado_changed_date <= bug.last_external_updated_at
+            last_ext_naive
+            and ado_changed_naive <= last_ext_naive
         ):
             result["skipped"] += 1
             return events
@@ -262,7 +275,7 @@ class SyncService:
             changed = True
 
         if changed:
-            bug.last_external_updated_at = ado_changed_date
+            bug.last_external_updated_at = ado_changed_naive
             bug.updated_at = datetime.utcnow()
             result["updated"] += 1
 
@@ -284,12 +297,12 @@ class SyncService:
                 )
                 db.add(BugEmbedding(bug_id=bug.id, embedding=embedding))
         else:
-            bug.last_external_updated_at = ado_changed_date
+            bug.last_external_updated_at = ado_changed_naive
             result["skipped"] += 1
 
         if sync_state:
             sync_state.last_synced_at = datetime.utcnow()
-            sync_state.external_updated_at = ado_changed_date
+            sync_state.external_updated_at = ado_changed_naive
             sync_state.status = "in_sync"
         else:
             db.add(
@@ -297,7 +310,7 @@ class SyncService:
                     bug_id=bug.id,
                     external_id=bug.external_id,
                     last_synced_at=datetime.utcnow(),
-                    external_updated_at=ado_changed_date,
+                    external_updated_at=ado_changed_naive,
                     status="in_sync",
                 )
             )
@@ -361,11 +374,11 @@ class SyncService:
                 bug = bug_result.scalar_one_or_none()
 
                 if not bug:
-                    return {"error": "Bug not found", **result}
+                    return {**result, "error": "Bug not found"}
 
                 ado_config = await get_active_ado_config(db)
                 if not ado_config or not ado_config.get("org"):
-                    return {"error": "Azure DevOps not configured", **result}
+                    return {**result, "error": "Azure DevOps not configured"}
 
                 client = AzureDevOpsClient(
                     org=ado_config["org"],
@@ -375,18 +388,18 @@ class SyncService:
 
                 ext_id = bug.external_id
                 if not ext_id:
-                    return {"error": "Bug has no external_id", **result}
+                    return {**result, "error": "Bug has no external_id"}
 
                 details = await client.get_work_item_details(ext_id)
                 if not details:
-                    return {"error": "Failed to fetch from ADO", **result}
+                    return {**result, "error": "Failed to fetch from ADO"}
 
                 fields = details.get("fields", {})
                 ado_changed_date = extract_ado_timestamp(
                     fields.get("System.ChangedDate")
                 )
 
-                sync_result = {}
+                sync_result = {"updated": 0, "skipped": 0, "comments_synced": 0}
                 events = await self._update_existing_bug(
                     db, client, bug, fields, ado_changed_date, sync_result
                 )
@@ -395,12 +408,12 @@ class SyncService:
                 for event in events:
                     await event_bus.publish(event)
 
-                result["updated"] = sync_result.get("updated", False)
+                result["updated"] = bool(sync_result.get("updated", 0) > 0)
                 result["synced"] = True
                 return result
 
         except Exception as e:
-            return {"error": str(e), **result}
+            return {**result, "error": str(e)}
 
     async def _sync_loop(self):
         while self._running:
@@ -498,11 +511,17 @@ async def trigger_single_bug_sync(bug_id: int) -> Dict[str, Any]:
 
 
 async def update_sync_config(interval_minutes: int) -> Dict[str, Any]:
+    old_interval = getattr(settings, "SYNC_INTERVAL_MINUTES", 15)
     settings.SYNC_INTERVAL_MINUTES = interval_minutes
 
-    if not _sync_service.is_running() and interval_minutes > 0:
-        await _sync_service.start_scheduler()
-    elif _sync_service.is_running() and interval_minutes <= 0:
-        await _sync_service.stop_scheduler()
+    if _sync_service.is_running():
+        if interval_minutes <= 0:
+            await _sync_service.stop_scheduler()
+        elif interval_minutes != old_interval:
+            await _sync_service.stop_scheduler()
+            await _sync_service.start_scheduler()
+    else:
+        if interval_minutes > 0:
+            await _sync_service.start_scheduler()
 
     return {"interval_minutes": interval_minutes, "status": "updated"}

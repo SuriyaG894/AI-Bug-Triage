@@ -89,3 +89,9 @@ frontend-demo/
 DEPLOYMENT_PLAN.md
 implementation_plan_file_upload
 session-sec_256a.md
+
+# tests
+docs/test-plan.md
+docs/test-run-commands.md
+tests/api
+tests/e2e

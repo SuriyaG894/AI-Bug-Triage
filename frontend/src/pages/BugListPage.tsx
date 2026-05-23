@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { bugApi, Bug, projectApi, Project } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { Badge, Card, DataTable, Column, ConfirmDialog } from '../components';
+import { Badge, Card, DataTable, Column } from '../components';
 import { Plus, Filter, FolderGit2, ShieldCheck } from 'lucide-react';
-import toast from 'react-hot-toast';
 
 export default function BugListPage() {
   const navigate = useNavigate();
@@ -22,7 +21,6 @@ export default function BugListPage() {
   const [searchQuery, setSearchQuery] = useState(filters.search);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [deleteBug, setDeleteBug] = useState<Bug | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
 
@@ -62,18 +60,6 @@ export default function BugListPage() {
     } finally {
       setLoading(false);
       setIsInitialLoading(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!deleteBug) return;
-    try {
-      await bugApi.delete(deleteBug.id);
-      toast.success('Bug deleted');
-      setDeleteBug(null);
-      fetchBugs();
-    } catch (error) {
-      toast.error('Failed to delete bug');
     }
   };
 
@@ -148,37 +134,20 @@ export default function BugListPage() {
       ),
     },
     {
+      key: 'created_by',
+      header: 'Created By',
+      sortable: true,
+      render: (bug) => (
+        <span className="text-sm text-gray-600 truncate max-w-[150px] inline-block" title={bug.created_by || ''}>
+          {bug.created_by || '-'}
+        </span>
+      ),
+    },
+    {
       key: 'created_at',
       header: 'Created',
       sortable: true,
       render: (bug) => new Date(bug.created_at).toLocaleDateString(),
-    },
-    {
-      key: 'actions',
-      header: '',
-      sticky: 'right',
-      render: (bug) => {
-        const canAct = user?.is_admin || bug.created_by === user?.email;
-        return canAct ? (
-          <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-            <Link
-              to={`/bugs/${bug.id}/edit`}
-              className="text-primary-600 hover:text-primary-800 text-sm font-medium"
-            >
-              Edit
-            </Link>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setDeleteBug(bug);
-              }}
-              className="text-red-600 hover:text-red-800 text-sm font-medium"
-            >
-              Delete
-            </button>
-          </div>
-        ) : null;
-      },
     },
   ];
 
@@ -340,17 +309,6 @@ export default function BugListPage() {
           />
         )}
       </Card>
-
-      {/* Delete Confirmation */}
-      <ConfirmDialog
-        isOpen={!!deleteBug}
-        onClose={() => setDeleteBug(null)}
-        onConfirm={handleDelete}
-        title="Delete Bug"
-        message={`Are you sure you want to delete "${deleteBug?.title}"? This action cannot be undone.`}
-        confirmLabel="Delete"
-        variant="danger"
-      />
     </div>
   );
 }

@@ -234,4 +234,48 @@ def test_parse_ado_description_wrapped_container():
     assert "System should" in parsed["expected_result"]
 
 
+def test_parse_ado_description_bug_64_formatting():
+    from app.services.integrations.field_mapping import parse_ado_description
+    
+    html_content = (
+        '<div><strong>Description:</strong><br/>\n'
+        'While editing a generated Steering Document or Implementation Plan, most action buttons '
+        'are correctly disabled except the <strong>Save</strong> button, which is expected behavior. '
+        'However, the <strong>Regenerate with Comments</strong> dropdown/button remains enabled during edit mode. '
+        'Clicking it does not perform any action, resulting in inconsistent and misleading UI behavior.<br/> </div>'
+        '<div><p><strong>Steps to Reproduce:</strong> </p><ol><li>\n'
+        'Login into the Knowledge Base application.\n'
+        '</li><li>\n'
+        'Navigate to the <strong>Steering Doc and Plan</strong> section.\n'
+        '</li><li>\n'
+        'Generate a <strong>Steering Document</strong>.\n'
+        '</li><li>\n'
+        'Once generation is completed, click on <strong>Edit</strong>.\n'
+        '</li><li>\n'
+        'Observe the available action buttons in edit mode.\n'
+        '</li><li>\n'
+        'Click on the <strong>Regenerate with Comments</strong> dropdown/button.\n'
+        '</li><li>\n'
+        'Repeat the same steps for the <strong>Implementation Plan</strong> section. </li> </ol>'
+        '<p><strong>Actual Result:</strong> </p><ul><li>\n'
+        'Most buttons are disabled in edit mode except:\n'
+        '<ul><li>\n'
+        'Save button (expected)\n'
+        '</li><li>\n'
+        'Regenerate with Comments dropdown/button (unexpected)\n'
+        '</li> </ul> </li><li>\n'
+        'Clicking the Regenerate with Comments option performs no action.\n'
+        '</li> </ul><p><strong>Expected Result:</strong> </p><ul><li>\n'
+        'The Regenerate with Comments dropdown/button should be disabled or hidden while in edit mode.\n'
+        '</li><li>\n'
+        'Only relevant edit actions such as Save/Cancel should remain enabled. </li> </ul><br/> </div>'
+    )
+    
+    parsed = parse_ado_description(html_content)
+    assert "While editing a generated Steering Document" in parsed["description"]
+    assert "Login into the Knowledge Base application" in parsed["repro_steps"]
+    assert "Most buttons are disabled" in parsed["actual_result"]
+    assert "The Regenerate with Comments dropdown/button should be disabled" in parsed["expected_result"]
+
+
 
