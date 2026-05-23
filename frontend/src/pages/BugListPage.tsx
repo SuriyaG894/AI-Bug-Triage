@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { bugApi, Bug, projectApi, Project } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Badge, Card, DataTable, Column } from '../components';
-import { Plus, Filter, FolderGit2, ShieldCheck } from 'lucide-react';
+import { Plus, Filter, FolderGit2, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 
 export default function BugListPage() {
   const navigate = useNavigate();
@@ -23,6 +23,13 @@ export default function BugListPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
+  const [showColumnCustomizer, setShowColumnCustomizer] = useState(false);
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>([
+    'id', 'title', 'project_id', 'severity', 'type', 'status', 'source', 'created_by', 'created_at'
+  ]);
+  const [tempSelectedColumnKeys, setTempSelectedColumnKeys] = useState<string[]>([
+    'id', 'title', 'project_id', 'severity', 'type', 'status', 'source', 'created_by', 'created_at'
+  ]);
 
   useEffect(() => {
     projectApi.myProjects().then(res => {
@@ -65,7 +72,7 @@ export default function BugListPage() {
 
   const hasNoAssignments = !user?.is_admin && projects.length === 0;
 
-  const columns: Column<Bug>[] = [
+  const allColumnsList: Column<Bug>[] = [
     {
       key: 'id',
       header: 'ID',
@@ -151,6 +158,8 @@ export default function BugListPage() {
     },
   ];
 
+  const columns = allColumnsList.filter(col => visibleColumnKeys.includes(col.key));
+
   if (isInitialLoading) {
     return (
       <div className="space-y-6">
@@ -212,15 +221,32 @@ export default function BugListPage() {
         </Card>
       )}
 
-      {/* Filters */}
+      {/* Filters & Columns Customizer */}
       <Card>
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
-        >
-          <Filter className="w-4 h-4" />
-          Filters
-        </button>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => {
+              setShowFilters(!showFilters);
+              setShowColumnCustomizer(false);
+            }}
+            className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+          >
+            <Filter className="w-4 h-4" />
+            Filters
+          </button>
+          
+          <button
+            onClick={() => {
+              setShowColumnCustomizer(!showColumnCustomizer);
+              setShowFilters(false);
+              setTempSelectedColumnKeys(visibleColumnKeys);
+            }}
+            className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            Columns
+          </button>
+        </div>
 
         {showFilters && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4 pt-4 border-t border-gray-200">
@@ -275,6 +301,64 @@ export default function BugListPage() {
                 <option value="resolved">Resolved</option>
                 <option value="closed">Closed</option>
               </select>
+            </div>
+          </div>
+        )}
+
+        {showColumnCustomizer && (
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Select Columns to View</h3>
+            <div className="flex flex-wrap gap-x-6 gap-y-3">
+              {[
+                { key: 'id', header: 'ID' },
+                { key: 'title', header: 'Title' },
+                { key: 'project_id', header: 'Project' },
+                { key: 'severity', header: 'Severity' },
+                { key: 'type', header: 'Type' },
+                { key: 'status', header: 'Status' },
+                { key: 'source', header: 'Source' },
+                { key: 'created_by', header: 'Created By' },
+                { key: 'created_at', header: 'Created' },
+              ].map(col => (
+                <label key={col.key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={tempSelectedColumnKeys.includes(col.key)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setTempSelectedColumnKeys(prev => [...prev, col.key]);
+                      } else {
+                        // Ensure at least title or ID remains to prevent a completely empty table
+                        if (tempSelectedColumnKeys.length > 1) {
+                          setTempSelectedColumnKeys(prev => prev.filter(k => k !== col.key));
+                        }
+                      }
+                    }}
+                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  {col.header}
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => {
+                  setVisibleColumnKeys(tempSelectedColumnKeys);
+                  setShowColumnCustomizer(false);
+                }}
+                className="btn-primary py-1.5 px-3 text-xs"
+              >
+                View
+              </button>
+              <button
+                onClick={() => {
+                  setTempSelectedColumnKeys(visibleColumnKeys);
+                  setShowColumnCustomizer(false);
+                }}
+                className="btn-secondary py-1.5 px-3 text-xs"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         )}
