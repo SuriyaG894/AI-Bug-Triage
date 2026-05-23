@@ -36,11 +36,13 @@ The system is built as a multi-tier web application designed to run locally via 
 *   **Secure Authentication:** JWT-based user authorization with PBKDF2 password hashing.
 *   **Password Reset Flow:** 6-digit OTP generation with email transmission (via SMTP) featuring secure 3-attempt lockout limits and expiration timers.
 *   **Role-Based Access Control (RBAC):** Restricts certain administrative settings and global dashboards to Admins, while project-scoped views isolate standard users.
+*   **Session Inactivity Timeout:** Monitors user interactivity (mouse movement, scroll, keypress, touch) in the frontend and displays a warning modal with a 10-second countdown when idle. Allows users to extend their session or log out. Session timeout duration is configurable from the Admin Settings.
 
 ### 2. AI-Powered Triage & Classification
 *   **Auto-Classification:** Leverages the **Groq API** (`llama-3.1-8b-instant`) to predict severity (critical/high/medium/low) and type (ui/backend/api/data/security/performance) with confidence scores.
 *   **Root Cause Analysis:** Generates 3 potential root causes and remedies upon bug registration.
 *   **Semantic Search Embeddings:** Generates 384-dimensional dense vectors using `sentence-transformers/all-MiniLM-L6-v2` (via lightweight `fastembed`) and indexes them using `pgvector` in PostgreSQL.
+*   **Rich Text Formatting:** Integrates `ReactQuill` to support rich formatting (bold, italic, list bullets/numbers, indentations) for *Steps to Reproduce*, *Expected Result*, and *Actual Result* fields instead of plain text, featuring HTML sanitization via `DOMPurify` on render.
 
 ### 3. Duplicate Bug Detection
 *   **Multi-Phase Deduplication:**
@@ -48,6 +50,7 @@ The system is built as a multi-tier web application designed to run locally via 
     *   **Phase 2 (Text-Based Fallback):** Token-based Jaccard similarity fallback calculation (weighted: 60% Title, 40% Description) with stop-word removal.
     *   **Phase 3 (External Check):** Query-based search checking for duplicates directly inside Azure DevOps (via WIQL) and JIRA (via JQL).
 *   **Automatic Warnings:** Flags potential duplicates immediately on description blur during bug creation.
+*   **Duplicate Justification Dialog:** Shows a modal asking for confirmation and justification when a potential duplicate is detected on Azure DevOps, which is logged with the defect record. Allows drilling down into similar bugs via local modal popups.
 
 ### 4. Integration & Bidirectional Sync
 *   **Azure DevOps (ADO):** Full bidirectional sync supporting work item creation, status mapping, field patch updates, comment importing, attachment uploading, and deletion.
@@ -55,9 +58,15 @@ The system is built as a multi-tier web application designed to run locally via 
 *   **Sync Service:** Configurable background scheduler that polls for updates and resolves conflicts with an "ADO wins" policy.
 *   **Credentials Security:** API tokens and PATs are encrypted at rest using XOR-based base64 encryption.
 
-### 5. Analytics Dashboard & Audit Logging
+### 5. Real-Time Notifications
+*   **Event-Driven Pub/Sub:** Publishes system events (assignment, status updates, deletion, sync updates) to subscribers to deliver real-time notifications.
+*   **User Inbox & Header Badges:** Provides an unread count badge in the header dropdown and a dedicated `/notifications` management interface (with pagination, all/unread filtering, and event detail cards).
+*   **Custom Settings:** Allows toggling email notification preferences.
+
+### 6. Analytics Dashboard & Audit Logging
 *   **Interactive Metrics:** Real-time data visualization of severity ratios, trend analyses, and common root causes using Recharts.
 *   **Action Auditing:** Automatically logs key user actions (logins, creates, updates, and syncs) with auto-cleanup of logs older than 30 days.
+*   **About Page:** Offers a dedicated `/about` page detailing the application version, key features, architecture tech stack details, and support escalation channels.
 
 ---
 
@@ -66,7 +75,7 @@ The system is built as a multi-tier web application designed to run locally via 
 | Layer | Component | Technologies |
 |---|---|---|
 | **Frontend** | Framework & UI | React 18, TypeScript, Vite, Tailwind CSS, Headless UI, Lucide Icons |
-| | Charts & State | Recharts, React Hook Form, React Hot Toast, Axios |
+| | Charts & State | Recharts, React Hook Form, React Hot Toast, Axios, ReactQuill, DOMPurify |
 | **Backend** | Framework | FastAPI, Uvicorn, Python 3.11, Pydantic v2 |
 | | Database | PostgreSQL, `pgvector`, SQLAlchemy (asyncpg), Alembic migrations |
 | | Task Scheduler | Celery (with Redis) or custom async background task scheduler |
@@ -179,6 +188,7 @@ Below is an overview of the primary FastAPI endpoints. See Swagger docs (`/docs`
 | `POST` | `/api/auth/forgot-password` | Request password reset OTP. |
 | `POST` | `/api/auth/verify-otp` | Verify 6-digit OTP and receive reset token. |
 | `POST` | `/api/auth/reset-password` | Submit new password using reset token. |
+| `GET` | `/api/auth/session-timeout` | Get active user's session timeout settings. |
 
 ### Bug Tracker (`/api/bugs`)
 | Method | Endpoint | Description |
@@ -190,6 +200,16 @@ Below is an overview of the primary FastAPI endpoints. See Swagger docs (`/docs`
 | `DELETE` | `/api/bugs/{id}` | Delete local bug and its ADO equivalent. |
 | `POST` | `/api/bugs/check-duplicate` | Verify details against existing bugs. |
 | `POST` | `/api/bugs/suggest` | Provide AI-suggested fields based on description. |
+
+### Notifications (`/api/notifications`)
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/notifications` | List notifications with filters (unread only, pagination). |
+| `GET` | `/api/notifications/unread-count` | Fetch current unread notification count. |
+| `PUT` | `/api/notifications/{notification_id}/read` | Mark a specific notification as read. |
+| `PUT` | `/api/notifications/read-all` | Mark all notifications for the user as read. |
+| `GET` | `/api/notifications/settings` | Read notification settings (e.g. email notifications toggle). |
+| `PUT` | `/api/notifications/settings` | Update notification settings. |
 
 ### Integrations & Sync (`/api/integrations` & `/api/sync`)
 | Method | Endpoint | Description |
@@ -209,6 +229,9 @@ Below is an overview of the primary FastAPI endpoints. See Swagger docs (`/docs`
 | `GET` | `/api/admin/users` | List all users registered (Admin only). |
 | `PATCH` | `/api/admin/users/{id}/role` | Promote/demote user roles. |
 | `GET` | `/api/admin/audit-logs` | Fetch system audit logs. |
+| `GET` | `/api/admin/settings/session-timeout` | Get session timeout settings (Admin only). |
+| `POST` | `/api/admin/settings/session-timeout` | Update session timeout settings (Admin only). |
+| `POST` | `/api/admin/settings/session-timeout/reset` | Reset session timeout settings to default (Admin only). |
 
 ---
 
