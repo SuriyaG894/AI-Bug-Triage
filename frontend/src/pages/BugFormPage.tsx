@@ -684,6 +684,7 @@ export default function BugFormPage() {
                       </a>
                     ) : bug.id ? (
                       <button
+                        type="button"
                         onClick={() => openBugDetail(bug.id!)}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors flex-shrink-0"
                       >
@@ -788,6 +789,7 @@ export default function BugFormPage() {
                           </a>
                         ) : bug.id ? (
                           <button
+                            type="button"
                             onClick={() => openBugDetail(bug.id!)}
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors flex-shrink-0"
                           >
@@ -814,6 +816,7 @@ export default function BugFormPage() {
             </div>
             <div className="flex justify-end gap-3">
               <button
+                type="button"
                 onClick={() => {
                   setShowJustificationModal(false);
                   setPendingDuplicateBug(null);
@@ -823,6 +826,7 @@ export default function BugFormPage() {
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleJustificationSubmit}
                 disabled={!justification.trim()}
                 className="btn-primary disabled:opacity-50"
