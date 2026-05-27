@@ -158,9 +158,9 @@ export const bugApi = {
       repro_steps: reproSteps
     }),
 
-  pushToExternal: (bugId: number, toolType: string, projectKey?: string) =>
+  pushToExternal: (bugId: number, toolType: string, projectKey?: string, fallback?: boolean) =>
     api.post<PushBugResponse>(`/bugs/${bugId}/push`, null, {
-      params: { tool_type: toolType, project_key: projectKey }
+      params: { tool_type: toolType, project_key: projectKey, fallback: fallback }
     }),
 };
 

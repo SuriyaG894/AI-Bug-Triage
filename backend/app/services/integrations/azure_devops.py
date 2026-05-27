@@ -233,7 +233,8 @@ class AzureDevOpsClient:
                                assigned_to: str = None,
                                duplicate_of_external_ids: List[str] = None,
                                duplicate_justification: str = None,
-                               project: str = None) -> Dict[str, Any]:
+                               project: str = None,
+                               created_by: str = None) -> Dict[str, Any]:
         """Create a work item in Azure DevOps"""
         severity_value_map = {
             "critical": "1 - Critical",
@@ -298,12 +299,17 @@ class AzureDevOpsClient:
         if assigned_to:
             fields.append({"op": "add", "path": "/fields/System.AssignedTo", "value": assigned_to})
 
+        if created_by:
+            fields.append({"op": "add", "path": "/fields/System.CreatedBy", "value": created_by})
+
         work_item_project = project or self.project
         work_item_base_url = f"https://dev.azure.com/{self.org}/{work_item_project}" if work_item_project else f"https://dev.azure.com/{self.org}"
 
         async with httpx.AsyncClient() as client:
             # Step 1: Create work item WITHOUT attachment (basic fields only)
             work_item_url = f"{work_item_base_url}/_apis/wit/workitems/%24Bug?api-version=7.0"
+            if created_by:
+                work_item_url += "&bypassRules=true"
             response = await client.patch(
                 work_item_url,
                 json=fields,
@@ -338,6 +344,19 @@ class AzureDevOpsClient:
                 return result_dict
             else:
                 print(f"Azure DevOps API Error: {response.status_code} - {response.text}")
+                err_text = response.text.lower()
+                is_bypass_error = (
+                    "tf401322" in err_text or 
+                    "bypassrules" in err_text or 
+                    "system.createdby" in err_text or
+                    "bypass rules" in err_text
+                )
+                if is_bypass_error:
+                    return {
+                        "success": False,
+                        "error": "bypass_rules_failed",
+                        "message": "User does not have access/permissions to bypass rules in ADO.",
+                    }
                 return {
                     "success": False,
                     "message": f"Failed to create work item: {response.status_code} - {response.text[:200]}",

@@ -18,6 +18,7 @@ export default function BugDetailPage() {
   const [pushResult, setPushResult] = useState<PushBugResponse | null>(null);
   const [showPushModal, setShowPushModal] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showBypassConfirm, setShowBypassConfirm] = useState(false);
 
   const renderFormattedContent = (content: string | undefined | null) => {
     if (!content) return null;
@@ -53,14 +54,22 @@ export default function BugDetailPage() {
     }
   };
 
-  const handlePushToAzureDevOps = async () => {
+  const handlePushToAzureDevOps = async (fallback = false) => {
     if (!bug) return;
     
     setPushing(true);
     setPushResult(null);
+    if (fallback) {
+      setShowPushModal(true);
+    }
     
     try {
-      const response = await bugApi.pushToExternal(bug.id, 'azure_devops');
+      const response = await bugApi.pushToExternal(bug.id, 'azure_devops', undefined, fallback);
+      if (!response.data.success && response.data.error === 'bypass_rules_failed') {
+        setShowPushModal(false);
+        setShowBypassConfirm(true);
+        return;
+      }
       setPushResult(response.data);
       if (response.data.success) {
         toast.success('Pushed to Azure DevOps');
@@ -394,6 +403,20 @@ export default function BugDetailPage() {
         message={`Are you sure you want to delete "${bug?.title}"? This action cannot be undone.`}
         confirmLabel="Delete"
         variant="danger"
+      />
+
+      {/* Bypass Rules Fallback Confirmation */}
+      <ConfirmDialog
+        isOpen={showBypassConfirm}
+        onClose={() => setShowBypassConfirm(false)}
+        onConfirm={() => {
+          setShowBypassConfirm(false);
+          handlePushToAzureDevOps(true);
+        }}
+        title="Azure DevOps Access Warning"
+        message="This user doesn't have access to ADO, so PAT owner name will be used as bug creator. Do you want to proceed?"
+        confirmLabel="Proceed"
+        variant="warning"
       />
     </div>
   );

@@ -36,19 +36,31 @@ security = HTTPBearer(auto_error=False)
 async def get_current_user_from_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db)
-) -> Optional[User]:
+) -> User:
     """Get current authenticated user from JWT token."""
     if not credentials:
-        return None
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication credentials were not provided"
+        )
     
     from app.api.routes.auth import decode_token, TokenData
     
     token_data = decode_token(credentials.credentials)
     if not token_data:
-        return None
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token"
+        )
     
     result = await db.execute(select(User).where(User.id == token_data.user_id))
-    return result.scalar_one_or_none()
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found"
+        )
+    return user
 
 
 @router.post("/suggest", response_model=BugSuggestionResponse)
@@ -200,7 +212,7 @@ async def list_bugs(
     search: Optional[str] = None,
     project_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user_from_token),
+    current_user: User = Depends(get_current_user_from_token),
 ):
     query = select(Bug)
 
@@ -226,25 +238,15 @@ async def list_bugs(
             )
         )).scalars().all()
         if assigned_project_ids:
-            # Show bugs in assigned projects AND unassigned bugs (project_id is NULL)
-            query = query.where(
-                or_(
-                    Bug.project_id.in_(assigned_project_ids),
-                    Bug.project_id.is_(None)
-                )
-            )
+            # Show bugs ONLY in assigned projects
+            query = query.where(Bug.project_id.in_(assigned_project_ids))
         else:
             # No assigned projects, return empty list
             return BugListResponse(total=0, bugs=[])
 
     # Apply project filter if specified
     if project_id:
-        query = query.where(
-            or_(
-                Bug.project_id == project_id,
-                Bug.project_id.is_(None)
-            )
-        )
+        query = query.where(Bug.project_id == project_id)
 
     count_query = select(func.count()).select_from(query.subquery())
     total = await db.scalar(count_query)
@@ -651,6 +653,7 @@ async def push_bug_to_external(
     bug_id: int,
     tool_type: str,
     project_key: Optional[str] = None,
+    fallback: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_from_token),
 ):
@@ -693,6 +696,26 @@ async def push_bug_to_external(
 
         client = AzureDevOpsClient(org=org, pat=pat, project=ado_project_name)
 
+        created_by = None
+        if not fallback:
+            creator_user = None
+            if bug.reporter_id:
+                creator_user = (await db.execute(
+                    select(User).where(User.id == bug.reporter_id)
+                )).scalar_one_or_none()
+            elif bug.created_by:
+                creator_user = (await db.execute(
+                    select(User).where(User.email == bug.created_by)
+                )).scalar_one_or_none()
+
+            if creator_user:
+                if creator_user.full_name:
+                    created_by = f"{creator_user.full_name} <{creator_user.email}>"
+                else:
+                    created_by = creator_user.email
+            else:
+                created_by = bug.created_by or current_user.email
+
         if bug.external_id:
             push_result = await client.update_work_item(
                 external_id=bug.external_id,
@@ -734,6 +757,7 @@ async def push_bug_to_external(
                     duplicate_of_external_ids=bug.duplicate_of_external_ids,
                     duplicate_justification=bug.duplicate_justification,
                     project=ado_project_name,
+                    created_by=created_by,
                 )
         else:
             push_result = await client.create_work_item(
@@ -750,6 +774,7 @@ async def push_bug_to_external(
                 duplicate_of_external_ids=bug.duplicate_of_external_ids,
                 duplicate_justification=bug.duplicate_justification,
                 project=ado_project_name,
+                created_by=created_by,
             )
 
         if push_result.get("success"):

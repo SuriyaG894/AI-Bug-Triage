@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useForm, Controller } from 'react-hook-form';
 import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi, projectApi, Project, Bug } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { Badge, Card, Modal } from '../components';
+import { Badge, Card, Modal, ConfirmDialog } from '../components';
 import { ArrowLeft, Loader2, Brain, AlertTriangle, Paperclip, X, ExternalLink, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactQuill from 'react-quill';
@@ -104,6 +104,7 @@ export default function BugEditPage() {
   const [formData, setFormData] = useState<BugEditInputs | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [showBypassConfirm, setShowBypassConfirm] = useState(false);
   const [projectError, setProjectError] = useState('');
   const [bugData, setBugData] = useState<any>(null);
   const [showPushOption, setShowPushOption] = useState(false);
@@ -300,7 +301,7 @@ export default function BugEditPage() {
     await submitBugUpdate(formData, justification);
   };
 
-  const handlePushUpdates = async () => {
+  const handlePushUpdates = async (fallback = false) => {
     if (!bugId) return;
 
     if (!user?.is_admin && !selectedProjectId) {
@@ -311,17 +312,21 @@ export default function BugEditPage() {
 
     setPushing(true);
     try {
-      const resp = await bugApi.pushToExternal(bugId, 'azure_devops');
+      const resp = await bugApi.pushToExternal(bugId, 'azure_devops', undefined, fallback);
+      if (!resp.data.success && resp.data.error === 'bypass_rules_failed') {
+        setShowBypassConfirm(true);
+        return;
+      }
       if (resp.data.success) {
         if (resp.data.attachment_errors?.length) {
           toast.error(`Pushed to ADO, but ${resp.data.attachment_errors.length} attachment(s) failed: ${resp.data.attachment_errors.join('; ')}`);
         } else {
           toast.success('Changes pushed to Azure DevOps!');
         }
+        navigate(`/bugs/${bugId}`);
       } else {
         toast.error(resp.data.message);
       }
-      navigate(`/bugs/${bugId}`);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to push changes to Azure DevOps');
     } finally {
@@ -1007,6 +1012,25 @@ export default function BugEditPage() {
           </div>
         ) : null}
       </Modal>
+
+      {/* Bypass Rules Fallback Confirmation */}
+      <ConfirmDialog
+        isOpen={showBypassConfirm}
+        onClose={() => {
+          setShowBypassConfirm(false);
+          toast.error("Bug changes saved locally, but updates were not pushed to Azure DevOps.");
+          navigate(`/bugs/${bugId}`);
+        }}
+        onConfirm={() => {
+          setShowBypassConfirm(false);
+          handlePushUpdates(true);
+        }}
+        title="Azure DevOps Access Warning"
+        message="This user doesn't have access to ADO, so PAT owner name will be used as bug creator. Do you want to proceed?"
+        confirmLabel="Proceed"
+        variant="warning"
+        loading={pushing}
+      />
     </div>
   );
 }

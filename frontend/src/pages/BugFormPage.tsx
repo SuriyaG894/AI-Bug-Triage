@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useForm, Controller } from 'react-hook-form';
 import { bugApi, DuplicateCheckResponse, BugSuggestion, uploadApi, projectApi, Project, Bug } from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { Badge, Card, Modal } from '../components';
+import { Badge, Card, Modal, ConfirmDialog } from '../components';
 import { ArrowLeft, Loader2, Brain, AlertTriangle, Paperclip, X, ExternalLink, Eye } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactQuill from 'react-quill';
@@ -102,6 +102,8 @@ export default function BugFormPage() {
   const [formData, setFormData] = useState<BugFormInputs | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [showBypassConfirm, setShowBypassConfirm] = useState(false);
+  const [createdBugId, setCreatedBugId] = useState<number | null>(null);
   const [viewBug, setViewBug] = useState<Bug | null>(null);
   const [loadingViewBug, setLoadingViewBug] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
@@ -228,21 +230,56 @@ export default function BugFormPage() {
             } else {
               toast.success(`Bug created and pushed to Azure DevOps! Work Item: ${pushResp.data.external_id}`);
             }
+            navigate('/bugs');
+          } else if (pushResp.data.error === 'bypass_rules_failed') {
+            setCreatedBugId(response.data.id);
+            setShowBypassConfirm(true);
           } else {
             toast.error(`Bug created but push failed: ${pushResp.data.message}`);
+            navigate('/bugs');
           }
         } catch (pushErr: any) {
           toast.error(`Bug created but push failed: ${pushErr.response?.data?.detail || 'Push failed'}`);
+          navigate('/bugs');
         }
       } else {
         toast.success(`Bug "${response.data.title}" created successfully!`);
+        navigate('/bugs');
       }
-      navigate('/bugs');
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Failed to create bug');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBypassConfirm = async () => {
+    if (!createdBugId) return;
+    setLoading(true);
+    try {
+      const pushResp = await bugApi.pushToExternal(createdBugId, 'azure_devops', undefined, true);
+      if (pushResp.data.success) {
+        if (pushResp.data.attachment_errors?.length) {
+          toast.error(`Pushed to ADO, but ${pushResp.data.attachment_errors.length} attachment(s) failed: ${pushResp.data.attachment_errors.join('; ')}`);
+        } else {
+          toast.success(`Bug pushed to Azure DevOps! Work Item: ${pushResp.data.external_id}`);
+        }
+      } else {
+        toast.error(`Push failed: ${pushResp.data.message}`);
+      }
+    } catch (pushErr: any) {
+      toast.error(pushErr.response?.data?.detail || 'Push failed');
+    } finally {
+      setLoading(false);
+      setShowBypassConfirm(false);
+      navigate('/bugs');
+    }
+  };
+
+  const handleBypassCancel = () => {
+    setShowBypassConfirm(false);
+    toast.error("Bug created locally, but was not pushed to Azure DevOps.");
+    navigate('/bugs');
   };
 
   const onSubmit = async (data: BugFormInputs) => {
@@ -910,6 +947,18 @@ export default function BugFormPage() {
           </div>
         ) : null}
       </Modal>
+
+      {/* Bypass Rules Fallback Confirmation */}
+      <ConfirmDialog
+        isOpen={showBypassConfirm}
+        onClose={handleBypassCancel}
+        onConfirm={handleBypassConfirm}
+        title="Azure DevOps Access Warning"
+        message="This user doesn't have access to ADO, so PAT owner name will be used as bug creator. Do you want to proceed?"
+        confirmLabel="Proceed"
+        variant="warning"
+        loading={loading}
+      />
     </div>
   );
 }
