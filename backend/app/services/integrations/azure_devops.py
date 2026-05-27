@@ -451,6 +451,7 @@ class AzureDevOpsClient:
             else:
                 return {
                     "success": False,
+                    "status_code": response.status_code,
                     "message": f"Failed to update work item: {response.status_code} - {response.text[:200]}",
                 }
 
@@ -629,6 +630,7 @@ class AzureDevOpsClient:
             
             if response.status_code == 200:
                 return response.json().get("workItems", [])
+            response.raise_for_status()
             return []
     
     async def get_work_item_details(self, external_id: str) -> Optional[Dict[str, Any]]:
@@ -645,6 +647,7 @@ class AzureDevOpsClient:
 
             if response.status_code == 200:
                 return response.json()
+            response.raise_for_status()
         return None
 
     async def get_work_item_comments(self, external_id: str, top: int = 100) -> List[Dict[str, Any]]:

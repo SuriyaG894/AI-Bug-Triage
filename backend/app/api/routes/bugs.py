@@ -373,7 +373,7 @@ async def update_bug(
                     pat=ado_config["pat"],
                     project=ado_config.get("project"),
                 )
-                await client.update_work_item(
+                update_res = await client.update_work_item(
                     external_id=bug.external_id,
                     title=bug.title,
                     description=bug.description,
@@ -386,18 +386,28 @@ async def update_bug(
                     attachments=bug.attachments,
                     assigned_to=bug.assigned_to,
                 )
-                bug.last_external_updated_at = datetime.utcnow()
-                sync_state_result = await db.execute(
-                    select(SyncState).where(SyncState.bug_id == bug.id)
-                )
-                sync_state = sync_state_result.scalar_one_or_none()
-                if sync_state:
-                    sync_state.last_synced_at = datetime.utcnow()
-                    sync_state.status = "in_sync"
-                await db.commit()
-                await log_audit(db, current_user.id, current_user.email, "bug.sync_push",
-                                entity_type="bug", entity_id=bug.id,
-                                details={"title": bug.title, "external_id": bug.external_id})
+                if not update_res.get("success") and update_res.get("status_code") == 404:
+                    # Clean up since the work item was deleted
+                    bug.external_id = None
+                    bug.push_to_external = False
+                    await db.execute(
+                        text("DELETE FROM sync_state WHERE bug_id = :bid"),
+                        {"bid": bug.id}
+                    )
+                    await db.commit()
+                else:
+                    bug.last_external_updated_at = datetime.utcnow()
+                    sync_state_result = await db.execute(
+                        select(SyncState).where(SyncState.bug_id == bug.id)
+                    )
+                    sync_state = sync_state_result.scalar_one_or_none()
+                    if sync_state:
+                        sync_state.last_synced_at = datetime.utcnow()
+                        sync_state.status = "in_sync"
+                    await db.commit()
+                    await log_audit(db, current_user.id, current_user.email, "bug.sync_push",
+                                    entity_type="bug", entity_id=bug.id,
+                                    details={"title": bug.title, "external_id": bug.external_id})
         except Exception:
             pass
 
@@ -700,6 +710,31 @@ async def push_bug_to_external(
                 duplicate_justification=bug.duplicate_justification,
                 project=ado_project_name,
             )
+            if not push_result.get("success") and push_result.get("status_code") == 404:
+                # Work item was deleted from ADO. Clear external_id and create a new one!
+                bug.external_id = None
+                bug.push_to_external = False
+                await db.execute(
+                    text("DELETE FROM sync_state WHERE bug_id = :bid"),
+                    {"bid": bug.id}
+                )
+                await db.commit()
+
+                push_result = await client.create_work_item(
+                    title=bug.title,
+                    description=bug.description,
+                    severity=bug.severity,
+                    bug_type=bug.type,
+                    priority_value=bug.priority,
+                    repro_steps=bug.repro_steps,
+                    expected_result=bug.expected_result,
+                    actual_result=bug.actual_result,
+                    attachments=bug.attachments,
+                    assigned_to=bug.assigned_to,
+                    duplicate_of_external_ids=bug.duplicate_of_external_ids,
+                    duplicate_justification=bug.duplicate_justification,
+                    project=ado_project_name,
+                )
         else:
             push_result = await client.create_work_item(
                 title=bug.title,

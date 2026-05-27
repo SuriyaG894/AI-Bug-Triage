@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import httpx
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
@@ -54,6 +55,34 @@ class SyncService:
                 )
 
                 work_items = await client.get_work_items()
+
+                # Check for deleted work items in ADO and clean up locally
+                ado_ids = {str(item.get("id")) for item in work_items if item.get("id")}
+                local_bugs_result = await db.execute(
+                    select(Bug).where(Bug.external_id.isnot(None))
+                )
+                local_bugs = local_bugs_result.scalars().all()
+                for local_bug in local_bugs:
+                    if local_bug.external_id not in ado_ids:
+                        if local_bug.source == "azure_devops":
+                            await db.execute(
+                                text("DELETE FROM bug_embeddings WHERE bug_id = :bid"),
+                                {"bid": local_bug.id}
+                            )
+                            await db.execute(
+                                text("DELETE FROM analysis_results WHERE bug_id = :bid"),
+                                {"bid": local_bug.id}
+                            )
+                            await db.delete(local_bug)
+                        else:
+                            local_bug.external_id = None
+                            local_bug.push_to_external = False
+                            await db.execute(
+                                text("DELETE FROM sync_state WHERE bug_id = :bid"),
+                                {"bid": local_bug.id}
+                            )
+                await db.commit()
+
                 if not work_items:
                     result["completed_at"] = datetime.now(timezone.utc).isoformat()
                     await self._persist_integration_sync_time(db)
@@ -390,9 +419,34 @@ class SyncService:
                 if not ext_id:
                     return {**result, "error": "Bug has no external_id"}
 
-                details = await client.get_work_item_details(ext_id)
-                if not details:
-                    return {**result, "error": "Failed to fetch from ADO"}
+                try:
+                    details = await client.get_work_item_details(ext_id)
+                    if not details:
+                        return {**result, "error": "Failed to fetch from ADO"}
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        if bug.source == "azure_devops":
+                            await db.execute(
+                                text("DELETE FROM bug_embeddings WHERE bug_id = :bid"),
+                                {"bid": bug.id}
+                            )
+                            await db.execute(
+                                text("DELETE FROM analysis_results WHERE bug_id = :bid"),
+                                {"bid": bug.id}
+                            )
+                            await db.delete(bug)
+                            await db.commit()
+                            return {**result, "synced": True, "updated": True, "message": "Bug deleted locally because it was deleted in ADO"}
+                        else:
+                            bug.external_id = None
+                            bug.push_to_external = False
+                            await db.execute(
+                                text("DELETE FROM sync_state WHERE bug_id = :bid"),
+                                {"bid": bug.id}
+                            )
+                            await db.commit()
+                            return {**result, "synced": True, "updated": True, "message": "Bug unlinked from ADO because ADO work item was deleted"}
+                    return {**result, "error": f"HTTP error fetching from ADO: {e.response.status_code}"}
 
                 fields = details.get("fields", {})
                 ado_changed_date = extract_ado_timestamp(
