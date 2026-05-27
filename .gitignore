@@ -95,3 +95,4 @@ docs/test-plan.md
 docs/test-run-commands.md
 tests/api
 tests/e2e
+scripts/run_recordings.ps1
