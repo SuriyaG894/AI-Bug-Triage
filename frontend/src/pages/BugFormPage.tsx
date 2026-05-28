@@ -13,8 +13,8 @@ import 'react-quill/dist/quill.snow.css';
 const quillModules = {
   toolbar: [
     ['bold', 'italic', 'underline', 'strike'],
-    [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-    [{ 'indent': '-1'}, { 'indent': '+1' }],
+    [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+    [{ 'indent': '-1' }, { 'indent': '+1' }],
     ['clean']
   ],
 };
@@ -59,7 +59,7 @@ export default function BugFormPage() {
     if (isHtml) {
       const cleanHtml = DOMPurify.sanitize(content);
       return (
-        <div 
+        <div
           className="rich-content text-sm text-gray-900 bg-gray-50 rounded p-2"
           dangerouslySetInnerHTML={{ __html: cleanHtml }}
         />
@@ -80,7 +80,7 @@ export default function BugFormPage() {
     if (isHtml) {
       const cleanHtml = DOMPurify.sanitize(content);
       return (
-        <div 
+        <div
           className="rich-content text-sm text-gray-900 bg-gray-50 rounded p-2"
           dangerouslySetInnerHTML={{ __html: cleanHtml }}
         />
@@ -120,7 +120,7 @@ export default function BugFormPage() {
       if (res.data.length === 1) {
         setSelectedProjectId(res.data[0].id);
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }, []);
 
   const [isDraftLoaded, setIsDraftLoaded] = useState(false);
@@ -132,7 +132,7 @@ export default function BugFormPage() {
     setValue,
     control,
     reset,
-    formState: { errors },
+    formState: { errors, isSubmitting, isSubmitSuccessful },
   } = useForm<BugFormInputs>({
     defaultValues: {
       title: '',
@@ -187,10 +187,10 @@ export default function BugFormPage() {
 
   // Save draft to localStorage
   useEffect(() => {
-    if (!isDraftLoaded || !user?.email) return;
+    if (!isDraftLoaded || !user?.email || isSubmitting || isSubmitSuccessful) return;
 
     const draftKey = `bug_draft_${user.email}`;
-    
+
     const hasText = (val: string | undefined) => {
       if (!val) return false;
       const stripped = val.replace(/<[^>]*>/g, '').trim();
@@ -217,13 +217,13 @@ export default function BugFormPage() {
     } else {
       localStorage.removeItem(draftKey);
     }
-  }, [isDraftLoaded, watchedValues, selectedProjectId, attachments, user?.email]);
+  }, [isDraftLoaded, watchedValues, selectedProjectId, attachments, user?.email, isSubmitting, isSubmitSuccessful]);
 
   const fetchSuggestion = useCallback(async () => {
     if (!title || title.length < 5 || !description || description.length < 20 || !reproSteps || reproSteps.length < 20) {
       return;
     }
-    
+
     setGettingSuggestion(true);
     try {
       const response = await bugApi.suggest(title, description, reproSteps);
@@ -238,7 +238,7 @@ export default function BugFormPage() {
 
   const checkDuplicate = async () => {
     if (!description || description.length < 10) return;
-    
+
     setCheckingDuplicate(true);
     try {
       const response = await bugApi.checkDuplicate(title, description, reproSteps);
@@ -297,7 +297,25 @@ export default function BugFormPage() {
       if (user?.email) {
         localStorage.removeItem(`bug_draft_${user.email}`);
       }
-      
+
+      reset({
+        title: '',
+        description: '',
+        priority: 'medium',
+        severity: 'medium',
+        pushToAzure: false,
+        assigned_to: '',
+        repro_steps: '',
+        expected_result: '',
+        actual_result: '',
+        created_by: user?.email || '',
+      });
+      setAttachments([]);
+      setDuplicateResult(null);
+      setSuggestion(null);
+      setShowSuggestion(false);
+      setPendingDuplicateBug(null);
+
       if (data.pushToAzure) {
         try {
           const pushResp = await bugApi.pushToExternal(response.data.id, 'azure_devops');
@@ -371,10 +389,10 @@ export default function BugFormPage() {
       setFormData(data);
       return;
     }
-    
+
     await submitBug(data, null, null);
   };
-  
+
   const handleJustificationSubmit = async () => {
     if (!pendingDuplicateBug || !justification.trim() || !formData) return;
 
@@ -387,11 +405,11 @@ export default function BugFormPage() {
       .filter(b => (b.similarity ?? 0) >= 0.5 && b.external_id)
       .map(b => b.external_id)
       .filter((id): id is string => !!id);
-    
+
     setShowJustificationModal(false);
     setJustification('');
     setPendingDuplicateBug(null);
-    
+
     await submitBug(formData, justification, extIds);
   };
 
@@ -442,7 +460,7 @@ export default function BugFormPage() {
       setSuggestion(null);
       setShowSuggestion(false);
       setPendingDuplicateBug(null);
-      
+
       setIsDraftLoaded(false);
       if (user?.email) {
         localStorage.removeItem(`bug_draft_${user.email}`);
@@ -797,8 +815,8 @@ export default function BugFormPage() {
                 const badgeStyle = isHigh
                   ? 'bg-red-50 text-red-700 border-red-200'
                   : isMid
-                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                  : 'bg-blue-50 text-blue-700 border-blue-200';
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : 'bg-blue-50 text-blue-700 border-blue-200';
                 return (
                   <div key={bug.id || bug.external_id || idx} className="flex items-center gap-4 px-4 py-3">
                     <div className="flex-1 min-w-0">
@@ -912,8 +930,8 @@ export default function BugFormPage() {
                     const badgeStyle = isHigh
                       ? 'bg-red-50 text-red-700 border-red-200'
                       : isMid
-                      ? 'bg-amber-50 text-amber-700 border-amber-200'
-                      : 'bg-blue-50 text-blue-700 border-blue-200';
+                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                        : 'bg-blue-50 text-blue-700 border-blue-200';
                     return (
                       <div key={idx} className="flex items-center gap-4 px-4 py-3">
                         <div className="flex-1 min-w-0">

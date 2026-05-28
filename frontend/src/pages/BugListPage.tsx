@@ -296,6 +296,7 @@ export default function BugListPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Severity</label>
               <select
+                name="severity"
                 value={filters.severity}
                 onChange={(e) => setFilters({ ...filters, severity: e.target.value })}
                 className="input-field"
@@ -310,6 +311,7 @@ export default function BugListPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
               <select
+                name="type"
                 value={filters.type}
                 onChange={(e) => setFilters({ ...filters, type: e.target.value })}
                 className="input-field"
@@ -324,6 +326,7 @@ export default function BugListPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
               <select
+                name="status"
                 value={filters.status}
                 onChange={(e) => setFilters({ ...filters, status: e.target.value })}
                 className="input-field"
