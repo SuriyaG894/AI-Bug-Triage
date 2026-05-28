@@ -131,6 +131,7 @@ export interface PushBugResponse {
   url?: string;
   message: string;
   attachment_errors?: string[];
+  error?: string;
 }
 
 export const bugApi = {

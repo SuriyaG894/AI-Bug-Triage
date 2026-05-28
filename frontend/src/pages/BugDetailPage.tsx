@@ -386,7 +386,7 @@ export default function BugDetailPage() {
               <button onClick={() => setShowPushModal(false)} className="btn-secondary">
                 Cancel
               </button>
-              <button onClick={handlePushToAzureDevOps} className="btn-primary">
+              <button onClick={() => handlePushToAzureDevOps(false)} className="btn-primary">
                 Push
               </button>
             </div>

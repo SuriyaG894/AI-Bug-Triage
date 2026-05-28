@@ -24,6 +24,25 @@ export default function BugListPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [showColumnCustomizer, setShowColumnCustomizer] = useState(false);
+
+  const hasActiveFilters = !!(
+    filters.severity ||
+    filters.type ||
+    filters.status ||
+    searchQuery ||
+    selectedProjectId
+  );
+
+  const handleResetFilters = () => {
+    setFilters({
+      severity: '',
+      type: '',
+      status: '',
+      search: '',
+    });
+    setSearchQuery('');
+    setSelectedProjectId(null);
+  };
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>([
     'id', 'title', 'project_id', 'severity', 'type', 'status', 'source', 'created_by', 'created_at'
   ]);
@@ -223,29 +242,43 @@ export default function BugListPage() {
 
       {/* Filters & Columns Customizer */}
       <Card>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => {
-              setShowFilters(!showFilters);
-              setShowColumnCustomizer(false);
-            }}
-            className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
-          >
-            <Filter className="w-4 h-4" />
-            Filters
-          </button>
-          
-          <button
-            onClick={() => {
-              setShowColumnCustomizer(!showColumnCustomizer);
-              setShowFilters(false);
-              setTempSelectedColumnKeys(visibleColumnKeys);
-            }}
-            className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
-          >
-            <SlidersHorizontal className="w-4 h-4" />
-            Columns
-          </button>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => {
+                setShowFilters(!showFilters);
+                setShowColumnCustomizer(false);
+              }}
+              className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+            >
+              <Filter className="w-4 h-4" />
+              <span>Filters</span>
+              {hasActiveFilters && (
+                <span className="w-1.5 h-1.5 rounded-full bg-primary-600 animate-pulse" />
+              )}
+            </button>
+            
+            <button
+              onClick={() => {
+                setShowColumnCustomizer(!showColumnCustomizer);
+                setShowFilters(false);
+                setTempSelectedColumnKeys(visibleColumnKeys);
+              }}
+              className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+              Columns
+            </button>
+          </div>
+
+          {hasActiveFilters && (
+            <button
+              onClick={handleResetFilters}
+              className="text-xs font-semibold text-red-600 hover:text-red-700 hover:underline"
+            >
+              Reset Filters
+            </button>
+          )}
         </div>
 
         {showFilters && (

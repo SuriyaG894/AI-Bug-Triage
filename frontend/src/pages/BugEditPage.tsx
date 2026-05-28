@@ -805,7 +805,7 @@ export default function BugEditPage() {
           {showPushOption && bugData?.external_id ? (
             <button
               type="button"
-              onClick={handlePushUpdates}
+              onClick={() => handlePushUpdates(false)}
               disabled={pushing}
               className="btn-primary disabled:opacity-50"
             >

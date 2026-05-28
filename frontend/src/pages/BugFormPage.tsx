@@ -45,6 +45,12 @@ interface Attachment {
   content_base64?: string;
 }
 
+interface BugFormDraft {
+  formValues: BugFormInputs;
+  selectedProjectId: number | null;
+  attachments: Attachment[];
+}
+
 export default function BugFormPage() {
   const navigate = useNavigate();
   const renderModalFieldContent = (content: string | undefined | null) => {
@@ -117,15 +123,20 @@ export default function BugFormPage() {
     }).catch(() => {});
   }, []);
 
+  const [isDraftLoaded, setIsDraftLoaded] = useState(false);
+
   const {
     register,
     handleSubmit,
     watch,
     setValue,
     control,
+    reset,
     formState: { errors },
   } = useForm<BugFormInputs>({
     defaultValues: {
+      title: '',
+      description: '',
       priority: 'medium',
       severity: 'medium',
       pushToAzure: false,
@@ -133,6 +144,7 @@ export default function BugFormPage() {
       repro_steps: '',
       expected_result: '',
       actual_result: '',
+      created_by: '',
     }
   });
 
@@ -143,9 +155,69 @@ export default function BugFormPage() {
     }
   }, [user, setValue]);
 
-  const title = watch('title', '');
-  const description = watch('description', '');
-  const reproSteps = watch('repro_steps', '');
+  // Load draft from localStorage
+  useEffect(() => {
+    if (!user?.email || isDraftLoaded) return;
+
+    const draftKey = `bug_draft_${user.email}`;
+    const savedDraft = localStorage.getItem(draftKey);
+    if (savedDraft) {
+      try {
+        const draft: BugFormDraft = JSON.parse(savedDraft);
+        if (draft.formValues) {
+          reset(draft.formValues);
+        }
+        if (draft.selectedProjectId !== undefined) {
+          setSelectedProjectId(draft.selectedProjectId);
+        }
+        if (draft.attachments) {
+          setAttachments(draft.attachments);
+        }
+      } catch (e) {
+        console.error('Failed to parse bug draft:', e);
+      }
+    }
+    setIsDraftLoaded(true);
+  }, [user?.email, isDraftLoaded, reset]);
+
+  const watchedValues = watch();
+  const title = watchedValues.title || '';
+  const description = watchedValues.description || '';
+  const reproSteps = watchedValues.repro_steps || '';
+
+  // Save draft to localStorage
+  useEffect(() => {
+    if (!isDraftLoaded || !user?.email) return;
+
+    const draftKey = `bug_draft_${user.email}`;
+    
+    const hasText = (val: string | undefined) => {
+      if (!val) return false;
+      const stripped = val.replace(/<[^>]*>/g, '').trim();
+      return stripped.length > 0;
+    };
+
+    const hasContent = !!(
+      watchedValues.title?.trim() ||
+      watchedValues.description?.trim() ||
+      hasText(watchedValues.repro_steps) ||
+      hasText(watchedValues.expected_result) ||
+      hasText(watchedValues.actual_result) ||
+      watchedValues.assigned_to?.trim() ||
+      attachments.length > 0
+    );
+
+    if (hasContent) {
+      const draft: BugFormDraft = {
+        formValues: watchedValues,
+        selectedProjectId,
+        attachments,
+      };
+      localStorage.setItem(draftKey, JSON.stringify(draft));
+    } else {
+      localStorage.removeItem(draftKey);
+    }
+  }, [isDraftLoaded, watchedValues, selectedProjectId, attachments, user?.email]);
 
   const fetchSuggestion = useCallback(async () => {
     if (!title || title.length < 5 || !description || description.length < 20 || !reproSteps || reproSteps.length < 20) {
@@ -220,6 +292,11 @@ export default function BugFormPage() {
         duplicate_of_external_ids: data.pushToAzure ? (extIds || undefined) : undefined,
         project_id: selectedProjectId,
       });
+
+      setIsDraftLoaded(false);
+      if (user?.email) {
+        localStorage.removeItem(`bug_draft_${user.email}`);
+      }
       
       if (data.pushToAzure) {
         try {
@@ -339,6 +416,38 @@ export default function BugFormPage() {
 
   const removeAttachment = (idx: number) => {
     setAttachments(attachments.filter((_, i) => i !== idx));
+  };
+
+  const handleReset = () => {
+    if (window.confirm('Are you sure you want to reset all fields? This will clear all your inputs, attachments, and the saved draft.')) {
+      reset({
+        title: '',
+        description: '',
+        priority: 'medium',
+        severity: 'medium',
+        pushToAzure: false,
+        assigned_to: '',
+        repro_steps: '',
+        expected_result: '',
+        actual_result: '',
+        created_by: user?.email || '',
+      });
+      setAttachments([]);
+      if (projects.length === 1) {
+        setSelectedProjectId(projects[0].id);
+      } else {
+        setSelectedProjectId(null);
+      }
+      setDuplicateResult(null);
+      setSuggestion(null);
+      setShowSuggestion(false);
+      setPendingDuplicateBug(null);
+      
+      setIsDraftLoaded(false);
+      if (user?.email) {
+        localStorage.removeItem(`bug_draft_${user.email}`);
+      }
+    }
   };
 
   return (
@@ -752,6 +861,13 @@ export default function BugFormPage() {
             className="btn-secondary"
           >
             Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="btn-secondary text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+          >
+            Reset Fields
           </button>
           <button
             type="submit"
